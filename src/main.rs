@@ -34,6 +34,7 @@ struct BitApp {
     error_message: Option<String>,
     dragging_index: Option<usize>,
     show_original: bool,
+    show_settings: bool,
 }
 
 impl Default for BitApp {
@@ -48,6 +49,7 @@ impl Default for BitApp {
             error_message: None,
             dragging_index: None,
             show_original: true,
+            show_settings: false,
         }
     }
 }
@@ -166,16 +168,6 @@ impl eframe::App for BitApp {
 
                 ui.separator();
 
-                ui.label("Shape:");
-                if ui.selectable_label(self.viewer.shape == BitShape::Square, "⬛ Square").clicked() {
-                    self.viewer.shape = BitShape::Square;
-                }
-                if ui.selectable_label(self.viewer.shape == BitShape::Circle, "⚫ Circle").clicked() {
-                    self.viewer.shape = BitShape::Circle;
-                }
-
-                ui.separator();
-
                 if ui.selectable_label(self.show_original, "Original").clicked() {
                     self.show_original = true;
                     self.update_viewer();
@@ -183,6 +175,12 @@ impl eframe::App for BitApp {
                 if ui.selectable_label(!self.show_original, "Processed").clicked() {
                     self.show_original = false;
                     self.update_viewer();
+                }
+
+                ui.separator();
+
+                if ui.button("⚙ Settings").clicked() {
+                    self.show_settings = !self.show_settings;
                 }
             });
         });
@@ -274,6 +272,70 @@ impl eframe::App for BitApp {
                 ui.label(format!("Processed bits: {}", self.processed_bits.len()));
                 ui.label(format!("Bit size: {:.1}px", self.viewer.bit_size));
             });
+
+        // Settings Window
+        if self.show_settings {
+            egui::Window::new("⚙ Settings")
+                .open(&mut self.show_settings)
+                .resizable(false)
+                .show(ctx, |ui| {
+                    ui.heading("Display Settings");
+                    ui.separator();
+
+                    // Shape selector
+                    ui.label("Bit Shape:");
+                    ui.horizontal(|ui| {
+                        if ui.selectable_label(self.viewer.shape == BitShape::Square, "⬛ Square").clicked() {
+                            self.viewer.shape = BitShape::Square;
+                        }
+                        if ui.selectable_label(self.viewer.shape == BitShape::Circle, "⚫ Circle").clicked() {
+                            self.viewer.shape = BitShape::Circle;
+                        }
+                    });
+
+                    ui.separator();
+
+                    // Grid settings
+                    ui.checkbox(&mut self.viewer.show_grid, "Show Grid Lines");
+                    ui.label("Toggle the grid lines around each bit");
+
+                    ui.add_space(8.0);
+
+                    ui.label("Thick Grid Interval (Horizontal):");
+                    ui.add(egui::Slider::new(&mut self.viewer.thick_grid_interval_horizontal, 0..=64)
+                        .text("bits"));
+                    ui.label("Thicker vertical lines every N bits horizontally (0 = off)");
+
+                    ui.add_space(4.0);
+
+                    ui.label("Thick Grid Interval (Vertical):");
+                    ui.add(egui::Slider::new(&mut self.viewer.thick_grid_interval_vertical, 0..=64)
+                        .text("bits"));
+                    ui.label("Thicker horizontal lines every N bits vertically (0 = off)");
+
+                    ui.add_space(4.0);
+
+                    ui.label("Thick Grid Spacing (Horizontal):");
+                    ui.add(egui::Slider::new(&mut self.viewer.thick_grid_spacing_horizontal, 0.0..=10.0)
+                        .text("pixels"));
+                    ui.label("Horizontal gap size (vertical line spacing)");
+
+                    ui.add_space(4.0);
+
+                    ui.label("Thick Grid Spacing (Vertical):");
+                    ui.add(egui::Slider::new(&mut self.viewer.thick_grid_spacing_vertical, 0.0..=10.0)
+                        .text("pixels"));
+                    ui.label("Vertical gap size (horizontal line spacing)");
+
+                    ui.separator();
+                    
+                    ui.label("💡 Tips:");
+                    ui.label("• Grid lines help distinguish individual bits");
+                    ui.label("• Thick intervals are useful for byte boundaries");
+                    ui.label("• Try interval of 8 for byte alignment");
+                    ui.label("• Increase spacing for more visible separation");
+                });
+        }
 
         egui::CentralPanel::default().show(ctx, |ui| {
             if let Some(error) = &self.error_message {

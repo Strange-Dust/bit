@@ -13,6 +13,11 @@ pub struct BitViewer {
     pub bit_size: f32,
     pub bit_spacing: f32,
     pub shape: BitShape,
+    pub show_grid: bool,
+    pub thick_grid_interval_horizontal: usize,
+    pub thick_grid_interval_vertical: usize,
+    pub thick_grid_spacing_horizontal: f32,
+    pub thick_grid_spacing_vertical: f32,
 }
 
 impl BitViewer {
@@ -23,6 +28,11 @@ impl BitViewer {
             bit_size: 10.0,
             bit_spacing: 2.0,
             shape: BitShape::Square,
+            show_grid: true,
+            thick_grid_interval_horizontal: 8,
+            thick_grid_interval_vertical: 8,
+            thick_grid_spacing_horizontal: 3.0,
+            thick_grid_spacing_vertical: 3.0,
         }
     }
 
@@ -36,8 +46,22 @@ impl BitViewer {
         let cell_size = self.bit_size + self.bit_spacing;
         // Add padding to prevent scrollbar from covering content
         let padding = 20.0;
-        let content_width = (self.frame_length as f32) * cell_size + padding;
-        let content_height = (total_rows as f32) * cell_size + padding;
+        
+        // Calculate extra spacing from thick grid intervals
+        let extra_width_spacing = if self.thick_grid_interval_horizontal > 0 {
+            ((self.frame_length / self.thick_grid_interval_horizontal) as f32) * self.thick_grid_spacing_horizontal
+        } else {
+            0.0
+        };
+        
+        let extra_height_spacing = if self.thick_grid_interval_vertical > 0 {
+            ((total_rows / self.thick_grid_interval_vertical) as f32) * self.thick_grid_spacing_vertical
+        } else {
+            0.0
+        };
+        
+        let content_width = (self.frame_length as f32) * cell_size + padding + extra_width_spacing;
+        let content_height = (total_rows as f32) * cell_size + padding + extra_height_spacing;
 
         // Set scrollbar to always be expanded (no hover animation)
         ui.style_mut().spacing.scroll.bar_width = 8.0;
@@ -62,10 +86,28 @@ impl BitViewer {
                     Sense::hover(),
                 );
 
-                let start_row = (viewport.min.y / cell_size).floor() as usize;
-                let end_row = ((viewport.max.y / cell_size).ceil() as usize + 1).min(total_rows);
-                let start_col = (viewport.min.x / cell_size).floor() as usize;
-                let end_col = ((viewport.max.x / cell_size).ceil() as usize + 1).min(self.frame_length);
+                // Calculate visible range accounting for spacing
+                // We need to render more conservatively since spacing changes the actual positions
+                let start_row = if total_rows == 0 { 
+                    0 
+                } else { 
+                    (viewport.min.y / (cell_size + self.thick_grid_spacing_vertical)).floor().max(0.0) as usize
+                };
+                let end_row = if total_rows == 0 { 
+                    0 
+                } else { 
+                    ((viewport.max.y / cell_size).ceil() as usize + 2).min(total_rows)
+                };
+                let start_col = if self.frame_length == 0 { 
+                    0 
+                } else { 
+                    (viewport.min.x / (cell_size + self.thick_grid_spacing_horizontal)).floor().max(0.0) as usize
+                };
+                let end_col = if self.frame_length == 0 { 
+                    0 
+                } else { 
+                    ((viewport.max.x / cell_size).ceil() as usize + 2).min(self.frame_length)
+                };
 
                 // Only render visible bits
                 for row in start_row..end_row {
@@ -78,8 +120,27 @@ impl BitViewer {
                         let bit = self.bits[bit_index];
                         let color = if bit { Color32::BLACK } else { Color32::WHITE };
 
-                        let x = response.rect.min.x + (col as f32) * cell_size;
-                        let y = response.rect.min.y + (row as f32) * cell_size;
+                        // Calculate accumulated extra spacing for thick grid boundaries
+                        let accumulated_x_spacing = if self.thick_grid_interval_horizontal > 0 && col > 0 {
+                            (col / self.thick_grid_interval_horizontal) as f32 * self.thick_grid_spacing_horizontal
+                        } else {
+                            0.0
+                        };
+                        
+                        let accumulated_y_spacing = if self.thick_grid_interval_vertical > 0 && row > 0 {
+                            (row / self.thick_grid_interval_vertical) as f32 * self.thick_grid_spacing_vertical
+                        } else {
+                            0.0
+                        };
+
+                        let x = response.rect.min.x + (col as f32) * cell_size + accumulated_x_spacing;
+                        let y = response.rect.min.y + (row as f32) * cell_size + accumulated_y_spacing;
+
+                        // Determine if this bit is on a thick grid boundary
+                        let is_thick_horizontal = self.thick_grid_interval_horizontal > 0 
+                            && col % self.thick_grid_interval_horizontal == 0;
+                        let is_thick_vertical = self.thick_grid_interval_vertical > 0 
+                            && row % self.thick_grid_interval_vertical == 0;
 
                         match self.shape {
                             BitShape::Square => {
@@ -88,7 +149,34 @@ impl BitViewer {
                                     Vec2::new(self.bit_size, self.bit_size),
                                 );
                                 painter.rect_filled(rect, 0.0, color);
-                                painter.rect_stroke(rect, 0.0, Stroke::new(1.0, Color32::GRAY));
+                                if self.show_grid {
+                                    // Draw edges individually to support different thicknesses
+                                    let left_width = if is_thick_horizontal { 2.0 } else { 1.0 };
+                                    let top_width = if is_thick_vertical { 2.0 } else { 1.0 };
+                                    let right_width = 1.0;
+                                    let bottom_width = 1.0;
+                                    
+                                    // Left edge
+                                    painter.line_segment(
+                                        [rect.left_top(), rect.left_bottom()],
+                                        Stroke::new(left_width, Color32::GRAY),
+                                    );
+                                    // Top edge
+                                    painter.line_segment(
+                                        [rect.left_top(), rect.right_top()],
+                                        Stroke::new(top_width, Color32::GRAY),
+                                    );
+                                    // Right edge
+                                    painter.line_segment(
+                                        [rect.right_top(), rect.right_bottom()],
+                                        Stroke::new(right_width, Color32::GRAY),
+                                    );
+                                    // Bottom edge
+                                    painter.line_segment(
+                                        [rect.left_bottom(), rect.right_bottom()],
+                                        Stroke::new(bottom_width, Color32::GRAY),
+                                    );
+                                }
                             }
                             BitShape::Circle => {
                                 let center = Pos2::new(
@@ -96,11 +184,14 @@ impl BitViewer {
                                     y + self.bit_size / 2.0,
                                 );
                                 painter.circle_filled(center, self.bit_size / 2.0, color);
-                                painter.circle_stroke(
-                                    center,
-                                    self.bit_size / 2.0,
-                                    Stroke::new(1.0, Color32::GRAY),
-                                );
+                                if self.show_grid {
+                                    // Use normal thin stroke for circles - spacing makes boundaries clear
+                                    painter.circle_stroke(
+                                        center,
+                                        self.bit_size / 2.0,
+                                        Stroke::new(1.0, Color32::GRAY),
+                                    );
+                                }
                             }
                         }
                     }
