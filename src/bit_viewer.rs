@@ -86,27 +86,79 @@ impl BitViewer {
                     Sense::hover(),
                 );
 
-                // Calculate visible range accounting for spacing
-                // We need to render more conservatively since spacing changes the actual positions
-                let start_row = if total_rows == 0 { 
-                    0 
-                } else { 
-                    (viewport.min.y / (cell_size + self.thick_grid_spacing_vertical)).floor().max(0.0) as usize
+                // Helper function to calculate position with spacing
+                let calc_position = |index: usize, interval: usize, spacing: f32| -> f32 {
+                    if interval > 0 && index > 0 {
+                        (index as f32) * cell_size + (index / interval) as f32 * spacing
+                    } else {
+                        (index as f32) * cell_size
+                    }
                 };
-                let end_row = if total_rows == 0 { 
-                    0 
-                } else { 
-                    ((viewport.max.y / cell_size).ceil() as usize + 2).min(total_rows)
+
+                // Binary search for start row
+                let start_row = if total_rows == 0 {
+                    0
+                } else {
+                    let mut low = 0;
+                    let mut high = total_rows;
+                    while low < high {
+                        let mid = (low + high) / 2;
+                        let pos = calc_position(mid, self.thick_grid_interval_vertical, self.thick_grid_spacing_vertical);
+                        if pos < viewport.min.y - cell_size {
+                            low = mid + 1;
+                        } else {
+                            high = mid;
+                        }
+                    }
+                    low.saturating_sub(1)
                 };
-                let start_col = if self.frame_length == 0 { 
-                    0 
-                } else { 
-                    (viewport.min.x / (cell_size + self.thick_grid_spacing_horizontal)).floor().max(0.0) as usize
+
+                // Find end row
+                let end_row = if total_rows == 0 {
+                    0
+                } else {
+                    let mut row = start_row;
+                    while row < total_rows {
+                        let pos = calc_position(row, self.thick_grid_interval_vertical, self.thick_grid_spacing_vertical);
+                        if pos > viewport.max.y + cell_size {
+                            break;
+                        }
+                        row += 1;
+                    }
+                    row.min(total_rows)
                 };
-                let end_col = if self.frame_length == 0 { 
-                    0 
-                } else { 
-                    ((viewport.max.x / cell_size).ceil() as usize + 2).min(self.frame_length)
+
+                // Binary search for start col
+                let start_col = if self.frame_length == 0 {
+                    0
+                } else {
+                    let mut low = 0;
+                    let mut high = self.frame_length;
+                    while low < high {
+                        let mid = (low + high) / 2;
+                        let pos = calc_position(mid, self.thick_grid_interval_horizontal, self.thick_grid_spacing_horizontal);
+                        if pos < viewport.min.x - cell_size {
+                            low = mid + 1;
+                        } else {
+                            high = mid;
+                        }
+                    }
+                    low.saturating_sub(1)
+                };
+
+                // Find end col
+                let end_col = if self.frame_length == 0 {
+                    0
+                } else {
+                    let mut col = start_col;
+                    while col < self.frame_length {
+                        let pos = calc_position(col, self.thick_grid_interval_horizontal, self.thick_grid_spacing_horizontal);
+                        if pos > viewport.max.x + cell_size {
+                            break;
+                        }
+                        col += 1;
+                    }
+                    col.min(self.frame_length)
                 };
 
                 // Only render visible bits
