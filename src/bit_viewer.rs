@@ -1,6 +1,7 @@
 use bitvec::prelude::*;
 use egui::{Color32, Pos2, Rect, Sense, Stroke, Vec2};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum BitShape {
@@ -19,6 +20,8 @@ pub struct BitViewer {
     pub thick_grid_interval_vertical: usize,
     pub thick_grid_spacing_horizontal: f32,
     pub thick_grid_spacing_vertical: f32,
+    pub highlighted_bits: HashSet<usize>,
+    pub jump_to_bit: Option<usize>,
 }
 
 impl BitViewer {
@@ -34,11 +37,31 @@ impl BitViewer {
             thick_grid_interval_vertical: 8,
             thick_grid_spacing_horizontal: 3.0,
             thick_grid_spacing_vertical: 3.0,
+            highlighted_bits: HashSet::new(),
+            jump_to_bit: None,
         }
     }
 
     pub fn set_bits(&mut self, bits: BitVec<u8, Msb0>) {
         self.bits = bits;
+    }
+    
+    pub fn clear_highlights(&mut self) {
+        self.highlighted_bits.clear();
+    }
+    
+    pub fn add_highlight(&mut self, bit_index: usize) {
+        self.highlighted_bits.insert(bit_index);
+    }
+    
+    pub fn add_highlight_range(&mut self, start: usize, length: usize) {
+        for i in start..(start + length) {
+            self.highlighted_bits.insert(i);
+        }
+    }
+    
+    pub fn jump_to_position(&mut self, bit_position: usize) {
+        self.jump_to_bit = Some(bit_position);
     }
 
     pub fn show(&mut self, ui: &mut egui::Ui) {
@@ -71,13 +94,19 @@ impl BitViewer {
         ui.style_mut().spacing.scroll.bar_outer_margin = 0.0;
         ui.style_mut().spacing.scroll.floating = false;
 
-
-        egui::ScrollArea::both()
+        let mut scroll_area = egui::ScrollArea::both()
             .auto_shrink([false, false])
-
             .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
-            .drag_to_scroll(true)
-            .show_viewport(ui, |ui, viewport| {
+            .drag_to_scroll(true);
+        
+        // Handle jump to bit position
+        if let Some(bit_pos) = self.jump_to_bit.take() {
+            let row = bit_pos / self.frame_length;
+            let y_offset = (row as f32) * cell_size;
+            scroll_area = scroll_area.vertical_scroll_offset(y_offset);
+        }
+
+        scroll_area.show_viewport(ui, |ui, viewport| {
                 // Set the content size
                 ui.set_width(content_width);
                 ui.set_height(content_height);
@@ -202,6 +231,12 @@ impl BitViewer {
                                     Vec2::new(self.bit_size, self.bit_size),
                                 );
                                 painter.rect_filled(rect, 0.0, color);
+                                
+                                // Draw highlight overlay if this bit is highlighted
+                                if self.highlighted_bits.contains(&bit_index) {
+                                    painter.rect_filled(rect, 0.0, Color32::from_rgba_unmultiplied(255, 255, 0, 150));
+                                }
+                                
                                 if self.show_grid {
                                     // Draw edges individually to support different thicknesses
                                     let left_width = if is_thick_horizontal { 2.0 } else { 1.0 };
@@ -237,6 +272,12 @@ impl BitViewer {
                                     y + self.bit_size / 2.0,
                                 );
                                 painter.circle_filled(center, self.bit_size / 2.0, color);
+                                
+                                // Draw highlight overlay if this bit is highlighted
+                                if self.highlighted_bits.contains(&bit_index) {
+                                    painter.circle_filled(center, self.bit_size / 2.0, Color32::from_rgba_unmultiplied(255, 255, 0, 150));
+                                }
+                                
                                 if self.show_grid {
                                     // Use normal thin stroke for circles - spacing makes boundaries clear
                                     painter.circle_stroke(

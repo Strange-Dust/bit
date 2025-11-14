@@ -1,6 +1,7 @@
 mod bit_viewer;
 mod file_io;
 mod operations;
+mod pattern_locator;
 mod settings;
 mod worksheet;
 
@@ -9,6 +10,7 @@ use bitvec::prelude::*;
 use eframe::egui;
 use file_io::{read_file_as_bits, write_bits_to_file};
 use operations::{BitOperation, OperationSequence};
+use pattern_locator::{Pattern, PatternFormat};
 use settings::AppSettings;
 use std::path::PathBuf;
 use worksheet::Worksheet;
@@ -86,6 +88,15 @@ struct BitApp {
     // Take/Skip Sequence editor state
     takeskip_name: String,
     takeskip_input: String,
+    
+    // Pattern Locator state
+    patterns: Vec<Pattern>,
+    show_pattern_locator: bool,
+    pattern_name_input: String,
+    pattern_input: String,
+    pattern_format: PatternFormat,
+    pattern_garbles: usize,
+    selected_pattern: Option<usize>,
 }
 
 impl Default for BitApp {
@@ -125,6 +136,13 @@ impl Default for BitApp {
             dragging_operation: None,
             takeskip_name: String::new(),
             takeskip_input: String::new(),
+            patterns: Vec::new(),
+            show_pattern_locator: false,
+            pattern_name_input: String::new(),
+            pattern_input: String::new(),
+            pattern_format: PatternFormat::Bits,
+            pattern_garbles: 0,
+            selected_pattern: None,
         }
     }
 }
@@ -427,6 +445,10 @@ impl eframe::App for BitApp {
 
                 if ui.button("⚙ Settings").clicked() {
                     self.show_settings = !self.show_settings;
+                }
+
+                if ui.button("🔍 Pattern Locator").clicked() {
+                    self.show_pattern_locator = !self.show_pattern_locator;
                 }
 
                 ui.separator();
@@ -949,6 +971,200 @@ impl eframe::App for BitApp {
                     ui.label("• Try interval of 8 for byte alignment");
                     ui.label("• Increase spacing for more visible separation");
                     ui.label("• Settings auto-save when changed");
+                });
+        }
+
+        // Pattern Locator Window
+        if self.show_pattern_locator {
+            egui::Window::new("🔍 Pattern Locator")
+                .open(&mut self.show_pattern_locator)
+                .default_width(400.0)
+                .default_height(600.0)
+                .resizable(true)
+                .show(ctx, |ui| {
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            ui.heading("Search for Bit Patterns");
+                            ui.separator();
+                            
+                            // Pattern input section
+                            ui.group(|ui| {
+                        ui.heading("Add Pattern");
+                        
+                        ui.horizontal(|ui| {
+                            ui.label("Name:");
+                            ui.text_edit_singleline(&mut self.pattern_name_input);
+                        });
+                        
+                        ui.horizontal(|ui| {
+                            ui.label("Format:");
+                            ui.selectable_value(&mut self.pattern_format, PatternFormat::Bits, "Bits (0/1)");
+                            ui.selectable_value(&mut self.pattern_format, PatternFormat::Hex, "Hex (0x...)");
+                            ui.selectable_value(&mut self.pattern_format, PatternFormat::Ascii, "ASCII");
+                        });
+                        
+                        ui.horizontal(|ui| {
+                            ui.label("Pattern:");
+                            ui.text_edit_singleline(&mut self.pattern_input);
+                        });
+                        ui.label(match self.pattern_format {
+                            PatternFormat::Hex => "Example: 0xFF or 0x1A2B",
+                            PatternFormat::Ascii => "Example: Hello",
+                            PatternFormat::Bits => "Example: 11100101",
+                        });
+                        
+                        ui.horizontal(|ui| {
+                            ui.label("Garbles allowed:");
+                            ui.add(egui::Slider::new(&mut self.pattern_garbles, 0..=16).text("bits"));
+                        });
+                        ui.label("Number of bit differences tolerated in matches");
+                        
+                        ui.horizontal(|ui| {
+                            if ui.button("➕ Add Pattern").clicked() {
+                                let name = if self.pattern_name_input.is_empty() {
+                                    format!("Pattern {}", self.patterns.len() + 1)
+                                } else {
+                                    self.pattern_name_input.clone()
+                                };
+                                
+                                match Pattern::new(name, self.pattern_format, self.pattern_input.clone(), self.pattern_garbles) {
+                                    Ok(pattern) => {
+                                        self.patterns.push(pattern);
+                                        self.pattern_name_input.clear();
+                                        self.pattern_input.clear();
+                                        self.error_message = None;
+                                    }
+                                    Err(e) => {
+                                        self.error_message = Some(format!("Invalid pattern: {}", e));
+                                    }
+                                }
+                            }
+                            
+                            if ui.button("🔄 Clear").clicked() {
+                                self.pattern_name_input.clear();
+                                self.pattern_input.clear();
+                                self.pattern_garbles = 0;
+                            }
+                        });
+                    });
+                    
+                    ui.separator();
+                    
+                    // Pattern list
+                    ui.heading("Patterns");
+                    
+                    if self.patterns.is_empty() {
+                        ui.label("No patterns added yet");
+                    } else {
+                        let mut to_remove = None;
+                        let mut to_search = None;
+                        
+                        egui::ScrollArea::vertical()
+                            .max_height(200.0)
+                            .show(ui, |ui| {
+                                for (idx, pattern) in self.patterns.iter().enumerate() {
+                                    ui.group(|ui| {
+                                        ui.horizontal(|ui| {
+                                            let selected = self.selected_pattern == Some(idx);
+                                            if ui.selectable_label(selected, &pattern.name).clicked() {
+                                                self.selected_pattern = Some(idx);
+                                            }
+                                            
+                                            ui.label(format!("({})", pattern.format.name()));
+                                            
+                                            if ui.button("🔍 Search").clicked() {
+                                                to_search = Some(idx);
+                                            }
+                                            
+                                            if ui.button("❌").clicked() {
+                                                to_remove = Some(idx);
+                                            }
+                                        });
+                                        
+                                        ui.label(format!("Pattern: {}", pattern.input));
+                                        ui.label(format!("Garbles: {} | Matches: {}", pattern.garbles, pattern.matches.len()));
+                                    });
+                                }
+                            });
+                        
+                        if let Some(idx) = to_remove {
+                            self.patterns.remove(idx);
+                            if self.selected_pattern == Some(idx) {
+                                self.selected_pattern = None;
+                            }
+                        }
+                        
+                        if let Some(idx) = to_search {
+                            let bits_to_search = if self.show_original {
+                                &self.original_bits
+                            } else {
+                                &self.processed_bits
+                            };
+                            self.patterns[idx].search(bits_to_search);
+                            self.selected_pattern = Some(idx);
+                        }
+                    }
+                    
+                    ui.separator();
+                    
+                    // Search results
+                    if let Some(pattern_idx) = self.selected_pattern {
+                        if pattern_idx < self.patterns.len() {
+                            let pattern = &self.patterns[pattern_idx];
+                            
+                            ui.heading(format!("Results for '{}'", pattern.name));
+                            ui.label(format!("Found {} matches", pattern.matches.len()));
+                            
+                            if pattern.matches.is_empty() {
+                                ui.label("No matches found. Try searching with the 🔍 Search button.");
+                            } else {
+                                ui.horizontal(|ui| {
+                                    if ui.button("🎯 Highlight All").clicked() {
+                                        self.viewer.clear_highlights();
+                                        for m in &pattern.matches {
+                                            self.viewer.add_highlight_range(m.position, pattern.bits.len());
+                                        }
+                                    }
+                                    
+                                    if ui.button("🔲 Clear Highlights").clicked() {
+                                        self.viewer.clear_highlights();
+                                    }
+                                });
+                                
+                                ui.separator();
+                                
+                                egui::ScrollArea::vertical()
+                                    .max_height(300.0)
+                                    .show(ui, |ui| {
+                                        ui.style_mut().spacing.item_spacing.y = 2.0;
+                                        
+                                        for (idx, m) in pattern.matches.iter().enumerate() {
+                                            ui.horizontal(|ui| {
+                                                if ui.button(format!("#{}", idx + 1)).clicked() {
+                                                    self.viewer.clear_highlights();
+                                                    self.viewer.add_highlight_range(m.position, pattern.bits.len());
+                                                    self.viewer.jump_to_position(m.position);
+                                                }
+                                                
+                                                ui.label(format!("@{}", m.position));
+                                                
+                                                if let Some(delta) = m.delta {
+                                                    ui.label(format!("Δ{}", delta));
+                                                }
+                                                
+                                                if m.mismatches > 0 {
+                                                    ui.label(format!("~{}", m.mismatches));
+                                                }
+                                                
+                                                ui.label(format!("{}", m.bits_string()));
+                                            });
+                                        }
+                                    });
+                            }
+                        }
+                    }
+                        });
                 });
         }
 
