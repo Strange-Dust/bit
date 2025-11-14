@@ -9,7 +9,7 @@ use bit_viewer::{BitShape, BitViewer};
 use bitvec::prelude::*;
 use eframe::egui;
 use file_io::{read_file_as_bits, write_bits_to_file};
-use operations::{BitOperation, OperationSequence};
+use operations::{BitOperation, OperationSequence, WorksheetOperation};
 use pattern_locator::{Pattern, PatternFormat};
 use settings::AppSettings;
 use std::path::PathBuf;
@@ -34,6 +34,8 @@ fn main() -> Result<(), eframe::Error> {
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum OperationType {
     TakeSkipSequence,
+    InvertBits,
+    MultiWorksheetLoad,
     // Future operations:
     // FindPattern,
     // Replace,
@@ -44,18 +46,24 @@ impl OperationType {
     fn name(&self) -> &str {
         match self {
             OperationType::TakeSkipSequence => "Take/Skip Sequence",
+            OperationType::InvertBits => "Invert Bits",
+            OperationType::MultiWorksheetLoad => "Multi-Worksheet Load",
         }
     }
 
     fn icon(&self) -> &str {
         match self {
             OperationType::TakeSkipSequence => "📝",
+            OperationType::InvertBits => "🔄",
+            OperationType::MultiWorksheetLoad => "📚",
         }
     }
 
     fn description(&self) -> &str {
         match self {
             OperationType::TakeSkipSequence => "Pattern-based bit extraction (t4r3i8s1)",
+            OperationType::InvertBits => "Invert all bits (0→1, 1→0)",
+            OperationType::MultiWorksheetLoad => "Load bits from multiple worksheets with operations",
         }
     }
 }
@@ -88,6 +96,15 @@ struct BitApp {
     // Take/Skip Sequence editor state
     takeskip_name: String,
     takeskip_input: String,
+    
+    // Invert Bits editor state
+    invert_name: String,
+    
+    // Multi-Worksheet Load editor state
+    multiworksheet_name: String,
+    multiworksheet_ops: Vec<(usize, String)>, // (worksheet_index, sequence_string)
+    multiworksheet_input: String, // Temporary input for adding new worksheet operations
+    multiworksheet_selected_worksheet: usize,
     
     // Pattern Locator state
     patterns: Vec<Pattern>,
@@ -136,6 +153,11 @@ impl Default for BitApp {
             dragging_operation: None,
             takeskip_name: String::new(),
             takeskip_input: String::new(),
+            invert_name: String::new(),
+            multiworksheet_name: String::new(),
+            multiworksheet_ops: Vec::new(),
+            multiworksheet_input: String::new(),
+            multiworksheet_selected_worksheet: 0,
             patterns: Vec::new(),
             show_pattern_locator: false,
             pattern_name_input: String::new(),
@@ -272,17 +294,63 @@ impl BitApp {
     }
 
     fn apply_operations(&mut self) {
-        if self.original_bits.is_empty() {
-            return;
-        }
-
-        let mut result = self.original_bits.clone();
+        // Check if we have a MultiWorksheetLoad operation
+        let has_multiworksheet = self.operations.iter().any(|op| matches!(op, BitOperation::MultiWorksheetLoad { .. }));
         
-        for op in &self.operations {
-            result = op.apply(&result);
-        }
+        if has_multiworksheet {
+            // MultiWorksheetLoad creates new bits from other worksheets
+            let mut result = BitVec::new();
+            
+            for op in &self.operations {
+                match op {
+                    BitOperation::MultiWorksheetLoad { worksheet_operations, .. } => {
+                        // Process each worksheet operation
+                        for wo in worksheet_operations {
+                            if wo.worksheet_index < self.worksheets.len() && wo.worksheet_index != self.current_worksheet_index {
+                                // Get the source worksheet's processed bits (if it has a file loaded)
+                                let source_bits = if let Some(file_path) = &self.worksheets[wo.worksheet_index].file_path {
+                                    match read_file_as_bits(file_path) {
+                                        Ok(bits) => bits,
+                                        Err(e) => {
+                                            self.error_message = Some(format!("Failed to load worksheet {}: {}", wo.worksheet_index + 1, e));
+                                            continue; // Skip if file can't be loaded
+                                        }
+                                    }
+                                } else {
+                                    continue; // Skip if no file
+                                };
+                                
+                                // Apply the sequence to these bits
+                                let processed = wo.sequence.apply(&source_bits);
+                                result.extend(processed);
+                            }
+                        }
+                    }
+                    _ => {
+                        // Regular operations are applied to result so far
+                        result = op.apply(&result);
+                    }
+                }
+            }
+            
+            self.processed_bits = result;
+            // When using MultiWorksheetLoad, automatically switch to viewing processed bits
+            self.show_original = false;
+        } else {
+            // Normal operation: start with original bits and apply operations
+            if self.original_bits.is_empty() {
+                return;
+            }
 
-        self.processed_bits = result;
+            let mut result = self.original_bits.clone();
+            
+            for op in &self.operations {
+                result = op.apply(&result);
+            }
+
+            self.processed_bits = result;
+        }
+        
         self.update_viewer();
         self.sync_to_worksheet();
     }
@@ -313,6 +381,20 @@ impl BitApp {
                     self.editing_operation_index = Some(index);
                     self.takeskip_name = name.clone();
                     self.takeskip_input = sequence.to_string();
+                }
+                BitOperation::InvertBits { name } => {
+                    self.show_operation_menu = Some(OperationType::InvertBits);
+                    self.editing_operation_index = Some(index);
+                    self.invert_name = name.clone();
+                }
+                BitOperation::MultiWorksheetLoad { name, worksheet_operations } => {
+                    self.show_operation_menu = Some(OperationType::MultiWorksheetLoad);
+                    self.editing_operation_index = Some(index);
+                    self.multiworksheet_name = name.clone();
+                    self.multiworksheet_ops = worksheet_operations
+                        .iter()
+                        .map(|wo| (wo.worksheet_index, wo.sequence.to_string()))
+                        .collect();
                 }
             }
         }
@@ -346,6 +428,48 @@ impl BitApp {
                         }
                     }
                 }
+                OperationType::InvertBits => {
+                    let name = if self.invert_name.trim().is_empty() {
+                        "Invert All Bits".to_string()
+                    } else {
+                        self.invert_name.clone()
+                    };
+                    
+                    BitOperation::InvertBits { name }
+                }
+                OperationType::MultiWorksheetLoad => {
+                    if self.multiworksheet_ops.is_empty() {
+                        self.error_message = Some("Must add at least one worksheet operation".to_string());
+                        return;
+                    }
+                    
+                    let mut worksheet_operations = Vec::new();
+                    for (ws_idx, seq_str) in &self.multiworksheet_ops {
+                        match OperationSequence::from_string(seq_str) {
+                            Ok(seq) => {
+                                worksheet_operations.push(WorksheetOperation {
+                                    worksheet_index: *ws_idx,
+                                    sequence: seq,
+                                });
+                            }
+                            Err(e) => {
+                                self.error_message = Some(format!("Invalid sequence for worksheet {}: {}", ws_idx + 1, e));
+                                return;
+                            }
+                        }
+                    }
+                    
+                    let name = if self.multiworksheet_name.trim().is_empty() {
+                        format!("Load from {} worksheets", worksheet_operations.len())
+                    } else {
+                        self.multiworksheet_name.clone()
+                    };
+                    
+                    BitOperation::MultiWorksheetLoad {
+                        name,
+                        worksheet_operations,
+                    }
+                }
             };
 
             if let Some(index) = self.editing_operation_index {
@@ -360,6 +484,10 @@ impl BitApp {
             self.editing_operation_index = None;
             self.takeskip_name.clear();
             self.takeskip_input.clear();
+            self.invert_name.clear();
+            self.multiworksheet_name.clear();
+            self.multiworksheet_ops.clear();
+            self.multiworksheet_input.clear();
             self.error_message = None;
             self.apply_operations();
         }
@@ -370,6 +498,10 @@ impl BitApp {
         self.editing_operation_index = None;
         self.takeskip_name.clear();
         self.takeskip_input.clear();
+        self.invert_name.clear();
+        self.multiworksheet_name.clear();
+        self.multiworksheet_ops.clear();
+        self.multiworksheet_input.clear();
     }
 }
 
@@ -488,7 +620,11 @@ impl eframe::App for BitApp {
                 egui::ScrollArea::vertical()
                     .id_salt("available_ops")
                     .show(ui, |ui| {
-                        let operations = [OperationType::TakeSkipSequence];
+                        let operations = [
+                            OperationType::TakeSkipSequence,
+                            OperationType::InvertBits,
+                            OperationType::MultiWorksheetLoad,
+                        ];
                         
                         for &op_type in &operations {
                             if ui.button(format!("{} {}", op_type.icon(), op_type.name()))
@@ -978,9 +1114,10 @@ impl eframe::App for BitApp {
         if self.show_pattern_locator {
             egui::Window::new("🔍 Pattern Locator")
                 .open(&mut self.show_pattern_locator)
-                .default_width(400.0)
-                .default_height(600.0)
+                .default_width(450.0)
+                .default_height(700.0)
                 .resizable(true)
+                .collapsible(false)
                 .show(ctx, |ui| {
                     egui::ScrollArea::vertical()
                         .auto_shrink([false, false])
@@ -1226,6 +1363,131 @@ impl eframe::App for BitApp {
                                 }
                             });
                         }
+                        OperationType::InvertBits => {
+                            ui.heading("Invert All Bits");
+                            ui.separator();
+                            
+                            ui.horizontal(|ui| {
+                                ui.label("Name:");
+                                ui.text_edit_singleline(&mut self.invert_name);
+                            });
+                            ui.label("Give this operation a custom name (optional)");
+                            
+                            ui.add_space(8.0);
+                            
+                            ui.label("This operation will invert all bits:");
+                            ui.label("• 0 → 1");
+                            ui.label("• 1 → 0");
+                            
+                            ui.add_space(8.0);
+                            
+                            ui.horizontal(|ui| {
+                                if ui.button("✓ Save").clicked() {
+                                    self.save_current_operation();
+                                }
+                                
+                                if ui.button("✗ Cancel").clicked() {
+                                    self.cancel_operation_edit();
+                                }
+                            });
+                        }
+                        OperationType::MultiWorksheetLoad => {
+                            ui.heading("Multi-Worksheet Load");
+                            ui.separator();
+                            
+                            ui.horizontal(|ui| {
+                                ui.label("Name:");
+                                ui.text_edit_singleline(&mut self.multiworksheet_name);
+                            });
+                            ui.label("Give this operation a custom name (optional)");
+                            
+                            ui.add_space(8.0);
+                            
+                            ui.label("Add worksheets to load from:");
+                            ui.separator();
+                            
+                            // Add worksheet operation
+                            ui.group(|ui| {
+                                ui.label("Add Worksheet Operation:");
+                                
+                                ui.horizontal(|ui| {
+                                    ui.label("Worksheet:");
+                                    egui::ComboBox::from_id_salt("worksheet_selector")
+                                        .selected_text(if self.multiworksheet_selected_worksheet < self.worksheets.len() {
+                                            &self.worksheets[self.multiworksheet_selected_worksheet].name
+                                        } else {
+                                            "Select..."
+                                        })
+                                        .show_ui(ui, |ui| {
+                                            for (idx, worksheet) in self.worksheets.iter().enumerate() {
+                                                // Skip current worksheet
+                                                if idx != self.current_worksheet_index {
+                                                    ui.selectable_value(&mut self.multiworksheet_selected_worksheet, idx, &worksheet.name);
+                                                }
+                                            }
+                                        });
+                                });
+                                
+                                ui.horizontal(|ui| {
+                                    ui.label("Sequence:");
+                                    ui.text_edit_singleline(&mut self.multiworksheet_input);
+                                });
+                                ui.label("Example: t4r3i8s1");
+                                
+                                if ui.button("➕ Add").clicked() {
+                                    if !self.multiworksheet_input.is_empty() {
+                                        self.multiworksheet_ops.push((
+                                            self.multiworksheet_selected_worksheet,
+                                            self.multiworksheet_input.clone()
+                                        ));
+                                        self.multiworksheet_input.clear();
+                                    }
+                                }
+                            });
+                            
+                            ui.add_space(8.0);
+                            
+                            // List of worksheet operations
+                            ui.label("Worksheet Operations:");
+                            if self.multiworksheet_ops.is_empty() {
+                                ui.label("No worksheets added yet");
+                            } else {
+                                let mut to_remove = None;
+                                egui::ScrollArea::vertical()
+                                    .max_height(200.0)
+                                    .show(ui, |ui| {
+                                        for (idx, (ws_idx, seq)) in self.multiworksheet_ops.iter().enumerate() {
+                                            ui.horizontal(|ui| {
+                                                let ws_name = if *ws_idx < self.worksheets.len() {
+                                                    &self.worksheets[*ws_idx].name
+                                                } else {
+                                                    "Unknown"
+                                                };
+                                                ui.label(format!("{}. {} → {}", idx + 1, ws_name, seq));
+                                                if ui.button("❌").clicked() {
+                                                    to_remove = Some(idx);
+                                                }
+                                            });
+                                        }
+                                    });
+                                
+                                if let Some(idx) = to_remove {
+                                    self.multiworksheet_ops.remove(idx);
+                                }
+                            }
+                            
+                            ui.add_space(8.0);
+                            
+                            ui.horizontal(|ui| {
+                                if ui.button("✓ Save").clicked() {
+                                    self.save_current_operation();
+                                }
+                                
+                                if ui.button("✗ Cancel").clicked() {
+                                    self.cancel_operation_edit();
+                                }
+                            });
+                        }
                     }
                 });
             
@@ -1239,7 +1501,8 @@ impl eframe::App for BitApp {
                 ui.colored_label(egui::Color32::RED, error);
             }
 
-            if self.original_bits.is_empty() {
+            // Show viewer if we have bits (either original or processed)
+            if self.original_bits.is_empty() && self.processed_bits.is_empty() {
                 ui.centered_and_justified(|ui| {
                     ui.heading("Open a file to view its bits");
                 });

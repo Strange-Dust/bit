@@ -32,28 +32,58 @@ pub enum BitOperation {
         name: String,
         sequence: OperationSequence,
     },
+    InvertBits {
+        name: String,
+    },
+    MultiWorksheetLoad {
+        name: String,
+        worksheet_operations: Vec<WorksheetOperation>,
+    },
     // Future operations:
     // FindPattern { name: String, pattern: String, highlight: bool },
     // Replace { name: String, from_pattern: String, to_pattern: String },
     // etc.
 }
 
+/// Represents a take/skip operation to apply to a specific worksheet
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorksheetOperation {
+    pub worksheet_index: usize,
+    pub sequence: OperationSequence,
+}
+
 impl BitOperation {
     pub fn name(&self) -> &str {
         match self {
             BitOperation::TakeSkipSequence { name, .. } => name,
+            BitOperation::InvertBits { name } => name,
+            BitOperation::MultiWorksheetLoad { name, .. } => name,
         }
     }
 
     pub fn description(&self) -> String {
         match self {
             BitOperation::TakeSkipSequence { sequence, .. } => sequence.to_string(),
+            BitOperation::InvertBits { .. } => "Inverts all bits".to_string(),
+            BitOperation::MultiWorksheetLoad { worksheet_operations, .. } => {
+                format!("Load from {} worksheet(s)", worksheet_operations.len())
+            }
         }
     }
 
     pub fn apply(&self, input: &BitVec<u8, Msb0>) -> BitVec<u8, Msb0> {
         match self {
             BitOperation::TakeSkipSequence { sequence, .. } => sequence.apply(input),
+            BitOperation::InvertBits { .. } => {
+                let mut result = input.clone();
+                result.iter_mut().for_each(|mut bit| *bit = !*bit);
+                result
+            }
+            BitOperation::MultiWorksheetLoad { .. } => {
+                // This operation type requires worksheet data, so it should be handled
+                // differently in the main application. For now, return empty.
+                BitVec::new()
+            }
         }
     }
 }
