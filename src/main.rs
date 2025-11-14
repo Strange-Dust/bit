@@ -142,12 +142,17 @@ impl eframe::App for BitApp {
         // This needs to be checked before any UI elements consume the scroll
         let mut font_size_changed = false;
         ctx.input(|i| {
-            if i.modifiers.ctrl && i.modifiers.shift {
+            // Check if BOTH Ctrl and Shift are being held down
+            let ctrl_shift_held = i.modifiers.ctrl && i.modifiers.shift;
+            
+            if ctrl_shift_held {
                 // Combine both scroll delta types
                 let delta = i.smooth_scroll_delta.y + i.raw_scroll_delta.y;
+                
                 if delta.abs() > 0.01 {
                     // Positive scroll = zoom in, negative = zoom out
-                    let sensitivity = 0.05;
+                    // Increased sensitivity for more responsive feel
+                    let sensitivity = 0.1;
                     self.font_size = (self.font_size + delta * sensitivity).clamp(8.0, 24.0);
                     font_size_changed = true;
                 }
