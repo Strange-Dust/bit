@@ -36,6 +36,7 @@ struct BitApp {
     show_original: bool,
     show_settings: bool,
     font_size: f32,
+    operations_panel_width: f32,
 }
 
 impl Default for BitApp {
@@ -52,6 +53,7 @@ impl Default for BitApp {
             show_original: true,
             show_settings: false,
             font_size: 14.0,
+            operations_panel_width: 300.0,
         }
     }
 }
@@ -184,58 +186,52 @@ impl eframe::App for BitApp {
         );
         ctx.set_style(style);
 
-        egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
-            ui.horizontal(|ui| {
+        egui::SidePanel::left("operations_panel")
+            .default_width(self.operations_panel_width)
+            .resizable(true)
+            .show(ctx, |ui| {
+                // Title
                 ui.heading("🔧 B.I.T. - Bit Information Tool");
                 
-                if ui.button("📂 Open File").clicked() {
-                    self.load_file();
-                }
+                ui.separator();
+                
+                // File operations and settings
+                ui.horizontal(|ui| {
+                    if ui.button("📂 Open File").clicked() {
+                        self.load_file();
+                    }
 
-                if ui.button("💾 Save File").clicked() {
-                    self.save_file();
-                }
+                    ui.separator();
 
+                    if ui.button("💾 Save File").clicked() {
+                        self.save_file();
+                    }
+
+                    ui.separator();
+
+                    if ui.button("⚙ Settings").clicked() {
+                        self.show_settings = !self.show_settings;
+                    }
+                });
+                
+                ui.separator();
+                
+                // Zoom controls
+                ui.horizontal(|ui| {
+                    ui.label("Zoom:");
+                    if ui.button("➕").clicked() {
+                        self.viewer.zoom_in();
+                    }
+                    if ui.button("➖").clicked() {
+                        self.viewer.zoom_out();
+                    }
+                    if ui.button("🔄").clicked() {
+                        self.viewer.reset_zoom();
+                    }
+                });
+                
                 ui.separator();
 
-                ui.label("Frame Length:");
-                ui.add(egui::Slider::new(&mut self.viewer.frame_length, 8..=512).logarithmic(true));
-
-                ui.separator();
-
-                ui.label("Zoom:");
-                if ui.button("➕").clicked() {
-                    self.viewer.zoom_in();
-                }
-                if ui.button("➖").clicked() {
-                    self.viewer.zoom_out();
-                }
-                if ui.button("🔄").clicked() {
-                    self.viewer.reset_zoom();
-                }
-
-                ui.separator();
-
-                if ui.selectable_label(self.show_original, "Original").clicked() {
-                    self.show_original = true;
-                    self.update_viewer();
-                }
-                if ui.selectable_label(!self.show_original, "Processed").clicked() {
-                    self.show_original = false;
-                    self.update_viewer();
-                }
-
-                ui.separator();
-
-                if ui.button("⚙ Settings").clicked() {
-                    self.show_settings = !self.show_settings;
-                }
-            });
-        });
-
-        egui::SidePanel::left("operations_panel")
-            .default_width(300.0)
-            .show(ctx, |ui| {
                 ui.heading("Operations");
 
                 ui.horizontal(|ui| {
@@ -320,6 +316,24 @@ impl eframe::App for BitApp {
                 ui.label(format!("Processed bits: {}", self.processed_bits.len()));
                 ui.label(format!("Bit size: {:.1}px", self.viewer.bit_size));
             });
+        
+        egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.label("Frame Length:");
+                ui.add(egui::Slider::new(&mut self.viewer.frame_length, 8..=512).logarithmic(true));
+
+                ui.separator();
+
+                if ui.selectable_label(self.show_original, "Original").clicked() {
+                    self.show_original = true;
+                    self.update_viewer();
+                }
+                if ui.selectable_label(!self.show_original, "Processed").clicked() {
+                    self.show_original = false;
+                    self.update_viewer();
+                }
+            });
+        });
 
         // Settings Window
         if self.show_settings {
