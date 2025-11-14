@@ -1,6 +1,7 @@
 use bitvec::prelude::*;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Operation {
     Take(usize),
     Reverse(usize),
@@ -19,9 +20,42 @@ impl Operation {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OperationSequence {
     pub operations: Vec<Operation>,
+}
+
+// Represents a complete operation that can be applied to bits
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum BitOperation {
+    TakeSkipSequence {
+        name: String,
+        sequence: OperationSequence,
+    },
+    // Future operations:
+    // FindPattern { name: String, pattern: String, highlight: bool },
+    // Replace { name: String, from_pattern: String, to_pattern: String },
+    // etc.
+}
+
+impl BitOperation {
+    pub fn name(&self) -> &str {
+        match self {
+            BitOperation::TakeSkipSequence { name, .. } => name,
+        }
+    }
+
+    pub fn description(&self) -> String {
+        match self {
+            BitOperation::TakeSkipSequence { sequence, .. } => sequence.to_string(),
+        }
+    }
+
+    pub fn apply(&self, input: &BitVec<u8, Msb0>) -> BitVec<u8, Msb0> {
+        match self {
+            BitOperation::TakeSkipSequence { sequence, .. } => sequence.apply(input),
+        }
+    }
 }
 
 impl OperationSequence {

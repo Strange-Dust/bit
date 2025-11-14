@@ -1,0 +1,10 @@
+{
+  "bit_shape": "Square",
+  "show_grid": true,
+  "thick_grid_interval_horizontal": 8,
+  "thick_grid_interval_vertical": 8,
+  "thick_grid_spacing_horizontal": 10.0,
+  "thick_grid_spacing_vertical": 10.0,
+  "font_size": 14.0,
+  "frame_length": 64
+}

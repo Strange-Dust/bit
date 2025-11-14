@@ -1,7 +1,8 @@
 use bitvec::prelude::*;
 use egui::{Color32, Pos2, Rect, Sense, Stroke, Vec2};
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum BitShape {
     Square,
     Circle,

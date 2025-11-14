@@ -1,0 +1,21 @@
+{
+  "name": "Main sheet",
+  "file_path": "D:\\dev\\bit\\auto-framework\\bit\\README.md",
+  "operations": [
+    {
+      "TakeSkipSequence": {
+        "name": "Sequence: s4t5",
+        "sequence": {
+          "operations": [
+            {
+              "Skip": 4
+            },
+            {
+              "Take": 5
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

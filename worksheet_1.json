@@ -1,0 +1,21 @@
+{
+  "name": "Worksheet 1",
+  "file_path": "D:\\dev\\bit\\auto-framework\\bit\\Cargo.toml",
+  "operations": [
+    {
+      "TakeSkipSequence": {
+        "name": "Sequence: t1s1",
+        "sequence": {
+          "operations": [
+            {
+              "Take": 1
+            },
+            {
+              "Skip": 1
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
