@@ -4,3 +4,5 @@ Cargo.lock
 *.swo
 *~
 .DS_Store
+src/main.rs
+/test_files

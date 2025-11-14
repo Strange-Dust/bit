@@ -35,6 +35,7 @@ struct BitApp {
     dragging_index: Option<usize>,
     show_original: bool,
     show_settings: bool,
+    font_size: f32,
 }
 
 impl Default for BitApp {
@@ -50,6 +51,7 @@ impl Default for BitApp {
             dragging_index: None,
             show_original: true,
             show_settings: false,
+            font_size: 14.0,
         }
     }
 }
@@ -136,6 +138,47 @@ impl BitApp {
 
 impl eframe::App for BitApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Handle Ctrl+Shift+Mouse Wheel for font size adjustment
+        // This needs to be checked before any UI elements consume the scroll
+        let mut font_size_changed = false;
+        ctx.input(|i| {
+            if i.modifiers.ctrl && i.modifiers.shift {
+                // Combine both scroll delta types
+                let delta = i.smooth_scroll_delta.y + i.raw_scroll_delta.y;
+                if delta.abs() > 0.01 {
+                    // Positive scroll = zoom in, negative = zoom out
+                    let sensitivity = 0.05;
+                    self.font_size = (self.font_size + delta * sensitivity).clamp(8.0, 24.0);
+                    font_size_changed = true;
+                }
+            }
+        });
+        
+        // Request repaint if font size changed for immediate visual feedback
+        if font_size_changed {
+            ctx.request_repaint();
+        }
+
+        // Apply font size to the context
+        let mut style = (*ctx.style()).clone();
+        style.text_styles.insert(
+            egui::TextStyle::Body,
+            egui::FontId::new(self.font_size, egui::FontFamily::Proportional),
+        );
+        style.text_styles.insert(
+            egui::TextStyle::Button,
+            egui::FontId::new(self.font_size, egui::FontFamily::Proportional),
+        );
+        style.text_styles.insert(
+            egui::TextStyle::Small,
+            egui::FontId::new(self.font_size * 0.85, egui::FontFamily::Proportional),
+        );
+        style.text_styles.insert(
+            egui::TextStyle::Heading,
+            egui::FontId::new(self.font_size * 1.3, egui::FontFamily::Proportional),
+        );
+        ctx.set_style(style);
+
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.heading("🔧 B.I.T. - Bit Information Tool");
@@ -326,6 +369,14 @@ impl eframe::App for BitApp {
                     ui.add(egui::Slider::new(&mut self.viewer.thick_grid_spacing_vertical, 0.0..=10.0)
                         .text("pixels"));
                     ui.label("Vertical gap size (horizontal line spacing)");
+
+                    ui.separator();
+
+                    // Font size setting
+                    ui.label("GUI Font Size:");
+                    ui.add(egui::Slider::new(&mut self.font_size, 8.0..=24.0)
+                        .text("pixels"));
+                    ui.label("Adjust the size of all interface text");
 
                     ui.separator();
                     
