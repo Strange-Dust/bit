@@ -2,6 +2,7 @@ mod bit_viewer;
 mod file_io;
 mod operations;
 mod pattern_locator;
+mod session;
 mod settings;
 mod worksheet;
 
@@ -11,6 +12,7 @@ use eframe::egui;
 use file_io::{read_file_as_bits, write_bits_to_file};
 use operations::{BitOperation, OperationSequence, WorksheetOperation};
 use pattern_locator::{Pattern, PatternFormat};
+use session::AppSession;
 use settings::AppSettings;
 use std::path::PathBuf;
 use worksheet::Worksheet;
@@ -114,6 +116,10 @@ struct BitApp {
     pattern_format: PatternFormat,
     pattern_garbles: usize,
     selected_pattern: Option<usize>,
+    
+    // Session restore state
+    show_restore_dialog: bool,
+    pending_session: Option<AppSession>,
 }
 
 impl Default for BitApp {
@@ -123,6 +129,10 @@ impl Default for BitApp {
         
         // Load settings from file
         let settings = AppSettings::auto_load();
+        
+        // Check if there's a previous session to restore
+        let pending_session = AppSession::load().ok();
+        let show_restore_dialog = pending_session.is_some();
         
         let mut viewer = BitViewer::new();
         viewer.shape = settings.bit_shape;
@@ -165,6 +175,8 @@ impl Default for BitApp {
             pattern_format: PatternFormat::Bits,
             pattern_garbles: 0,
             selected_pattern: None,
+            show_restore_dialog,
+            pending_session,
         }
     }
 }
@@ -176,6 +188,23 @@ impl BitApp {
     
     fn current_worksheet_mut(&mut self) -> &mut Worksheet {
         &mut self.worksheets[self.current_worksheet_index]
+    }
+    
+    fn save_session(&self) {
+        let session = AppSession::new(
+            self.worksheets.clone(),
+            self.current_worksheet_index,
+        );
+        
+        if let Err(e) = session.save() {
+            eprintln!("Failed to save session: {}", e);
+        }
+    }
+    
+    fn restore_session(&mut self, session: AppSession) {
+        self.worksheets = session.worksheets;
+        self.current_worksheet_index = session.current_worksheet_index.min(self.worksheets.len().saturating_sub(1));
+        self.load_from_worksheet();
     }
     
     fn sync_to_worksheet(&mut self) {
@@ -506,6 +535,11 @@ impl BitApp {
 }
 
 impl eframe::App for BitApp {
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        // Auto-save session when closing
+        self.save_session();
+    }
+    
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Disable text selection while dragging
         if self.dragging_operation.is_some() {
@@ -557,6 +591,36 @@ impl eframe::App for BitApp {
             egui::FontId::new(self.font_size * 1.3, egui::FontFamily::Proportional),
         );
         ctx.set_style(style);
+
+        // Show restore session dialog if there's a pending session
+        if self.show_restore_dialog {
+            egui::Window::new("Restore Previous Session?")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    ui.vertical_centered(|ui| {
+                        ui.label("A previous session was found.");
+                        ui.label("Would you like to restore it or start fresh?");
+                        ui.add_space(10.0);
+                        
+                        ui.horizontal(|ui| {
+                            if ui.button("🔄 Restore Session").clicked() {
+                                if let Some(session) = self.pending_session.take() {
+                                    self.restore_session(session);
+                                }
+                                self.show_restore_dialog = false;
+                            }
+                            
+                            if ui.button("🆕 Start Fresh").clicked() {
+                                let _ = AppSession::delete();
+                                self.pending_session = None;
+                                self.show_restore_dialog = false;
+                            }
+                        });
+                    });
+                });
+        }
 
         // Top panel with title and controls
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
