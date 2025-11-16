@@ -208,6 +208,7 @@ impl eframe::App for BitApp {
         // Render windows
         render_settings_window(self, ctx);
         render_pattern_locator_window(self, ctx);
+        render_frame_width_finder_window(self, ctx);
         render_operation_windows(self, ctx);
         render_column_editor_window(self, ctx);
         
@@ -868,6 +869,10 @@ fn render_settings_window(app: &mut BitApp, ctx: &egui::Context) {
 
 fn render_pattern_locator_window(app: &mut BitApp, ctx: &egui::Context) {
     crate::ui::windows::render_pattern_locator_window(app, ctx);
+}
+
+fn render_frame_width_finder_window(app: &mut BitApp, ctx: &egui::Context) {
+    crate::ui::windows::render_frame_width_finder_window(app, ctx);
 }
 
 fn render_operation_windows(app: &mut BitApp, ctx: &egui::Context) {

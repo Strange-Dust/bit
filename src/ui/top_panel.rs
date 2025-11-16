@@ -25,6 +25,10 @@ pub fn render(app: &mut BitApp, ctx: &egui::Context) {
                 app.show_pattern_locator = !app.show_pattern_locator;
             }
 
+            if ui.button("📏 Frame Width Finder").clicked() {
+                app.show_frame_width_finder = !app.show_frame_width_finder;
+            }
+
             ui.separator();
 
             // View mode toggle

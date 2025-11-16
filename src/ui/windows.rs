@@ -923,3 +923,306 @@ fn render_convolutional_preview(ui: &mut egui::Ui, branches: usize, delay_inc: u
     }
 }
 
+pub fn render_frame_width_finder_window(app: &mut BitApp, ctx: &egui::Context) {
+    use egui_plot::{Line, Plot, PlotPoints, Bar, BarChart, Points};
+    
+    if !app.show_frame_width_finder {
+        return;
+    }
+    
+    // Clone values before entering the window to avoid borrow checker issues
+    let analysis = app.frame_width_analysis.clone();
+    let mut frame_width_min = app.frame_width_min;
+    let mut frame_width_max = app.frame_width_max;
+    let mut frame_width_delta = app.frame_width_delta;
+    let mut sort_by_score = app.frame_width_sort_by_score;
+    let mut selected_width = app.frame_width_selected;
+    let mut run_analysis = false;
+    let mut apply_width: Option<usize> = None;
+    let mut keep_open = true;
+    
+    egui::Window::new("🔍 Find Frame Width")
+        .open(&mut keep_open)
+        .default_width(800.0)
+        .default_height(600.0)
+        .resizable(true)
+        .show(ctx, |ui| {
+            ui.heading("Automatic Frame Width Detection");
+            ui.label("Analyzes bit patterns to detect the most probable frame width");
+            ui.separator();
+            
+            // Controls
+            ui.horizontal(|ui| {
+                ui.label("Min Width:");
+                ui.add(egui::DragValue::new(&mut frame_width_min)
+                    .range(1..=1024)
+                    .speed(1.0));
+                
+                ui.add_space(10.0);
+                
+                ui.label("Max Width:");
+                ui.add(egui::DragValue::new(&mut frame_width_max)
+                    .range(1..=1024)
+                    .speed(1.0));
+                
+                ui.add_space(10.0);
+                
+                ui.label("Delta:")
+                    .on_hover_text("⚠️ Delta measures REPETITION PERIOD, not frame width!\n\n\
+                        • Delta = 0: Find frame width by bit position consistency (recommended)\n\
+                        • Delta > 0: Find repetition period (e.g., delta=5 finds patterns every 5 frames)\n\
+                        • For ASCII/binary frame detection, keep Delta = 0");
+                ui.add(egui::DragValue::new(&mut frame_width_delta)
+                    .range(0..=100)
+                    .speed(1.0));
+            });
+            
+            ui.add_space(5.0);
+            
+            if ui.button("🔍 Analyze").clicked() {
+                run_analysis = true;
+            }
+            
+            ui.separator();
+            
+            // Show results if analysis has been run
+            if let Some(ref analysis) = analysis {
+                ui.horizontal(|ui| {
+                    ui.heading(format!("Best Width: {}", analysis.best_width));
+                    ui.label(format!("(score: {:.4})", analysis.best_score));
+                    
+                    ui.add_space(20.0);
+                    
+                    if ui.button("✓ Apply Width to Viewer").clicked() {
+                        apply_width = Some(analysis.best_width);
+                    }
+                });
+                
+                ui.separator();
+                    
+                // Width scores line chart
+                ui.heading("Width Scores");
+                ui.label("Higher scores indicate more consistent bit patterns at that width");
+                ui.label("💡 Click on the graph to select a width");
+                
+                let plot_response = Plot::new("width_scores_plot")
+                    .view_aspect(2.5)
+                    .legend(egui_plot::Legend::default())
+                    .allow_drag(false)  // Disable dragging so clicks are easier
+                    .label_formatter(|name, value| {
+                        if !name.is_empty() {
+                            format!("{}\nWidth: {}\nScore: {:.4}", name, value.x as usize, value.y)
+                        } else {
+                            format!("Width: {}\nScore: {:.4}", value.x as usize, value.y)
+                        }
+                    })
+                    .show(ui, |plot_ui| {
+                        // Convert scores to plot points
+                        let points: PlotPoints = analysis.width_scores
+                            .iter()
+                            .map(|(width, score)| [*width as f64, *score])
+                            .collect();
+                        
+                        plot_ui.line(
+                            Line::new("consistency", points)
+                                .width(2.0)
+                        );
+                        
+                        // Highlight the best width
+                        let best_point = PlotPoints::new(vec![
+                            [analysis.best_width as f64, analysis.best_score]
+                        ]);
+                        
+                        plot_ui.points(
+                            Points::new("best", best_point)
+                                .radius(6.0)
+                        );
+                    });
+                
+                // Handle clicks on the plot to select a width
+                let mut hover_width: Option<usize> = None;
+                if let Some(pointer_pos) = plot_response.response.hover_pos() {
+                    let plot_pos = plot_response.transform.value_from_position(pointer_pos);
+                    
+                    // Find the nearest width to the hover position
+                    let hovered_width = plot_pos.x.round() as usize;
+                    
+                    // Find the closest actual width that was tested
+                    if let Some((nearest_width, _)) = analysis.width_scores
+                        .iter()
+                        .min_by_key(|(w, _)| (*w as i32 - hovered_width as i32).abs())
+                    {
+                        hover_width = Some(*nearest_width);
+                        
+                        if plot_response.response.clicked() {
+                            apply_width = Some(*nearest_width);
+                        }
+                    }
+                }
+                
+                // Show hover feedback
+                if let Some(width) = hover_width {
+                    let score = analysis.width_scores
+                        .iter()
+                        .find(|(w, _)| *w == width)
+                        .map(|(_, s)| *s)
+                        .unwrap_or(0.0);
+                    ui.label(format!("🖱️ Hovering: Width {} (score: {:.6}) - Click to apply", width, score));
+                }
+                
+                ui.add_space(10.0);
+                    ui.separator();
+                    
+                    // Bit position consistency for best width
+                    ui.heading(format!("Bit Position Consistency (Width {})", analysis.best_width));
+                    ui.label("Shows which bit positions have consistent patterns");
+                    
+                    let best_width_idx = analysis.width_scores
+                        .iter()
+                        .position(|(w, _)| *w == analysis.best_width)
+                        .unwrap_or(0);
+                    
+                    if best_width_idx < analysis.bit_position_patterns.len() {
+                        let bit_patterns = &analysis.bit_position_patterns[best_width_idx];
+                        
+                        Plot::new("bit_position_heatmap")
+                            .view_aspect(3.0)
+                            .legend(egui_plot::Legend::default())
+                            .label_formatter(|name, value| {
+                                if !name.is_empty() {
+                                    format!("{}\nBit Position: {}\nConsistency: {:.4}", 
+                                        name, value.x as usize, value.y)
+                                } else {
+                                    format!("Bit Position: {}\nConsistency: {:.4}", 
+                                        value.x as usize, value.y)
+                                }
+                            })
+                            .show(ui, |plot_ui| {
+                                // Create bars for each bit position
+                                let bars: Vec<_> = bit_patterns
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(pos, &score)| {
+                                        Bar::new(pos as f64, score)
+                                            .width(0.8)
+                                    })
+                                    .collect();
+                                
+                                plot_ui.bar_chart(BarChart::new("bit_positions", bars));
+                            });
+                    }
+                    
+                    ui.add_space(10.0);
+                    ui.separator();
+                    
+                    // Top 100 candidate widths in a scrollable, sortable table
+                    ui.heading("Candidate Widths");
+                    
+                    let mut sorted_widths = analysis.width_scores.clone();
+                    
+                    // Apply current sort
+                    if sort_by_score {
+                        sorted_widths.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+                    } else {
+                        sorted_widths.sort_by_key(|(w, _)| *w);
+                    }
+                    
+                    use egui_extras::{TableBuilder, Column};
+                    
+                    TableBuilder::new(ui)
+                        .striped(true)
+                        .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                        .column(Column::auto().at_least(80.0))  // Width
+                        .column(Column::remainder())             // Score
+                        .header(25.0, |mut header| {
+                            header.col(|ui| {
+                                if ui.selectable_label(!sort_by_score, "Width").clicked() {
+                                    sort_by_score = false;
+                                }
+                            });
+                            header.col(|ui| {
+                                if ui.selectable_label(sort_by_score, "Score").clicked() {
+                                    sort_by_score = true;
+                                }
+                            });
+                        })
+                        .body(|body| {
+                            body.rows(20.0, sorted_widths.len().min(100), |mut row| {
+                                let row_idx = row.index();
+                                let (width, score) = sorted_widths[row_idx];
+                                let is_selected = selected_width == Some(width);
+                                
+                                row.col(|ui| {
+                                    let (rect, response) = ui.allocate_exact_size(
+                                        ui.available_size(),
+                                        egui::Sense::click()
+                                    );
+                                    
+                                    if is_selected {
+                                        ui.painter().rect_filled(rect, 0.0, egui::Color32::from_rgb(60, 100, 180));
+                                    }
+                                    
+                                    ui.painter().text(
+                                        rect.left_center() + egui::vec2(5.0, 0.0),
+                                        egui::Align2::LEFT_CENTER,
+                                        format!("{}", width),
+                                        egui::FontId::default(),
+                                        if is_selected { egui::Color32::WHITE } else { ui.visuals().text_color() }
+                                    );
+                                    
+                                    if response.clicked() {
+                                        apply_width = Some(width);
+                                        selected_width = Some(width);
+                                    }
+                                });
+                                
+                                row.col(|ui| {
+                                    let (rect, response) = ui.allocate_exact_size(
+                                        ui.available_size(),
+                                        egui::Sense::click()
+                                    );
+                                    
+                                    if is_selected {
+                                        ui.painter().rect_filled(rect, 0.0, egui::Color32::from_rgb(60, 100, 180));
+                                    }
+                                    
+                                    ui.painter().text(
+                                        rect.left_center() + egui::vec2(5.0, 0.0),
+                                        egui::Align2::LEFT_CENTER,
+                                        format!("{:.6}", score),
+                                        egui::FontId::default(),
+                                        if is_selected { egui::Color32::WHITE } else { ui.visuals().text_color() }
+                                    );
+                                    
+                                    if response.clicked() {
+                                        apply_width = Some(width);
+                                        selected_width = Some(width);
+                                    }
+                                });
+                            });
+                        });
+                } else {
+                    ui.label("Click 'Analyze' to detect frame width");
+                }
+            });
+    
+    // Update app state from window
+    app.show_frame_width_finder = keep_open;
+    app.frame_width_min = frame_width_min;
+    app.frame_width_max = frame_width_max;
+    app.frame_width_delta = frame_width_delta;
+    app.frame_width_sort_by_score = sort_by_score;
+    app.frame_width_selected = selected_width;
+    
+    // Run analysis if requested
+    if run_analysis {
+        app.run_frame_width_analysis();
+    }
+    
+    // Apply width after window to avoid borrow issues
+    if let Some(width) = apply_width {
+        app.viewer.frame_length = width;
+        app.update_viewer();
+    }
+}
+

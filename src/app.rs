@@ -1,6 +1,6 @@
 // Main application state and logic
 
-use crate::analysis::{Pattern, PatternFormat};
+use crate::analysis::{Pattern, PatternFormat, FrameWidthAnalysis};
 use crate::core::{ViewMode, OperationType};
 use crate::processing::{BitOperation, OperationSequence, WorksheetOperation};
 use crate::storage::{read_file_as_bits, read_file_as_bits_with_progress, write_bits_to_file, AppSession, AppSettings, Worksheet, LoadProgress};
@@ -125,6 +125,15 @@ pub struct BitApp {
     #[allow(dead_code)]
     pub render_progress: f32,
     pub defer_first_render: bool, // Defer first render to show "preparing" message
+    
+    // Frame Width Finder state
+    pub show_frame_width_finder: bool,
+    pub frame_width_min: usize,
+    pub frame_width_max: usize,
+    pub frame_width_delta: usize,
+    pub frame_width_analysis: Option<FrameWidthAnalysis>,
+    pub frame_width_sort_by_score: bool, // true = sort by score, false = sort by width
+    pub frame_width_selected: Option<usize>, // Last clicked width
 }
 
 impl Default for BitApp {
@@ -213,6 +222,13 @@ impl Default for BitApp {
             render_progress_message: String::new(),
             render_progress: 0.0,
             defer_first_render: false,
+            show_frame_width_finder: false,
+            frame_width_min: 4,
+            frame_width_max: 200,
+            frame_width_delta: 0,
+            frame_width_analysis: None,
+            frame_width_sort_by_score: true, // Default to sorting by score
+            frame_width_selected: None,
         }
     }
 }
@@ -1329,5 +1345,31 @@ impl BitApp {
                         });
                 },
             );
+    }
+    
+    /// Run frame width analysis on the current bits
+    pub fn run_frame_width_analysis(&mut self) {
+        use crate::analysis::find_best_width;
+        
+        let bits_to_analyze = if self.show_original {
+            &self.original_bits
+        } else {
+            &self.processed_bits
+        };
+        
+        if bits_to_analyze.is_empty() {
+            self.error_message = Some("No data to analyze".to_string());
+            return;
+        }
+        
+        // Run analysis
+        let analysis = find_best_width(
+            bits_to_analyze,
+            self.frame_width_min,
+            self.frame_width_max,
+            self.frame_width_delta,
+        );
+        
+        self.frame_width_analysis = Some(analysis);
     }
 }
