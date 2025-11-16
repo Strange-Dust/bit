@@ -3,6 +3,10 @@ name = "bit"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+name = "bit"
+path = "src/lib.rs"
+
 [dependencies]
 eframe = "0.33"
 egui = "0.33"

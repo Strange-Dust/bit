@@ -1,4 +1,4 @@
-use crate::bit_viewer::BitShape;
+use crate::viewers::BitShape;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 

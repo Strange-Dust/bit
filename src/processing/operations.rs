@@ -156,6 +156,8 @@ impl OperationSequence {
         let mut pos = 0;
 
         while pos < input.len() {
+            let start_pos = pos;
+            
             for operation in &self.operations {
                 if pos >= input.len() {
                     break;
@@ -163,11 +165,18 @@ impl OperationSequence {
 
                 match operation {
                     Operation::Take(n) => {
+                        if *n == 0 {
+                            // Skip zero-sized operations to prevent infinite loops
+                            continue;
+                        }
                         let end = (pos + n).min(input.len());
                         result.extend_from_bitslice(&input[pos..end]);
                         pos = end;
                     }
                     Operation::Reverse(n) => {
+                        if *n == 0 {
+                            continue;
+                        }
                         let end = (pos + n).min(input.len());
                         let mut reversed: BitVec<u8, Msb0> = input[pos..end].iter().collect();
                         reversed.reverse();
@@ -175,6 +184,9 @@ impl OperationSequence {
                         pos = end;
                     }
                     Operation::Invert(n) => {
+                        if *n == 0 {
+                            continue;
+                        }
                         let end = (pos + n).min(input.len());
                         for bit in &input[pos..end] {
                             result.push(!*bit);
@@ -182,9 +194,17 @@ impl OperationSequence {
                         pos = end;
                     }
                     Operation::Skip(n) => {
+                        if *n == 0 {
+                            continue;
+                        }
                         pos = (pos + n).min(input.len());
                     }
                 }
+            }
+            
+            // Prevent infinite loop if no progress was made
+            if pos == start_pos {
+                break;
             }
         }
 

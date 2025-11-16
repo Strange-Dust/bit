@@ -105,16 +105,18 @@ impl ByteViewer {
         bytes
     }
 
-    /// Render the byte view
+    /// Render the byte view with virtualization for large files
     pub fn render(&mut self, ui: &mut egui::Ui, bits: &BitVec<u8, Msb0>) {
         if bits.is_empty() {
             ui.label("No data to display");
             return;
         }
 
-        let bytes = Self::bits_to_bytes(bits);
+        // Calculate total size WITHOUT converting all bits
+        let total_bits = bits.len();
+        let total_bytes = (total_bits + 7) / 8;
         let bytes_per_row = self.config.bytes_per_row;
-        let total_rows = (bytes.len() + bytes_per_row - 1) / bytes_per_row;
+        let total_rows = (total_bytes + bytes_per_row - 1) / bytes_per_row;
 
         // Calculate layout dimensions
         let byte_width = self.byte_size * 2.5;
@@ -122,83 +124,101 @@ impl ByteViewer {
         let header_height = 30.0;
         let offset_width = if self.config.show_hex_offset { 80.0 } else { 0.0 };
 
+        // Draw column headers (outside scroll area)
+        self.render_column_headers(ui, bytes_per_row, byte_width, offset_width, header_height);
+
+        // Use ScrollArea with virtualization
         egui::ScrollArea::vertical()
             .id_salt("byte_viewer_scroll")
-            .show(ui, |ui| {
-                // Draw column headers
-                self.render_column_headers(ui, bytes_per_row, byte_width, offset_width, header_height);
-
-                // Draw each row
-                for row in 0..total_rows {
-                    ui.horizontal(|ui| {
-                        // Show offset
-                        if self.config.show_hex_offset {
-                            let offset = row * bytes_per_row;
-                            ui.add_sized(
-                                [offset_width, byte_height],
-                                egui::Label::new(
-                                    egui::RichText::new(format!("{:08X}", offset))
-                                        .monospace()
-                                        .color(Color32::GRAY)
-                                )
-                            );
-                        }
-
-                        // Draw bytes
-                        let row_start = row * bytes_per_row;
-                        let row_end = (row_start + bytes_per_row).min(bytes.len());
-                        
-                        for byte_idx in row_start..row_end {
-                            let byte = bytes[byte_idx];
-                            let local_byte_idx = byte_idx - row_start;
-                            let bit_offset = local_byte_idx * 8;
-
-                            // Find which column this byte belongs to
-                            let column_color = self.find_column_color(bit_offset);
-
-                            let (rect, response) = ui.allocate_exact_size(
-                                Vec2::new(byte_width, byte_height),
-                                Sense::hover(),
-                            );
-
-                            // Draw background color if in a column
-                            if let Some(color) = column_color {
-                                ui.painter().rect_filled(
-                                    rect,
-                                    2.0,
-                                    Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 40)
+            .auto_shrink([false, false])
+            .show_rows(
+                ui,
+                byte_height,
+                total_rows,
+                |ui, row_range| {
+                    // Only render visible rows
+                    for row in row_range {
+                        ui.horizontal(|ui| {
+                            // Show offset
+                            if self.config.show_hex_offset {
+                                let offset = row * bytes_per_row;
+                                ui.add_sized(
+                                    [offset_width, byte_height],
+                                    egui::Label::new(
+                                        egui::RichText::new(format!("{:08X}", offset))
+                                            .monospace()
+                                            .color(Color32::GRAY)
+                                    )
                                 );
                             }
 
-                            // Draw byte value
-                            ui.painter().text(
-                                rect.center(),
-                                egui::Align2::CENTER_CENTER,
-                                format!("{:02X}", byte),
-                                egui::FontId::monospace(self.byte_size),
-                                if column_color.is_some() { Color32::BLACK } else { Color32::DARK_GRAY }
-                            );
+                            // Draw bytes - only convert the bytes we need for this row
+                            let row_start = row * bytes_per_row;
+                            let row_end = (row_start + bytes_per_row).min(total_bytes);
+                            
+                            for byte_idx in row_start..row_end {
+                                // Convert only this single byte from bits
+                                let bit_start = byte_idx * 8;
+                                let bit_end = (bit_start + 8).min(total_bits);
+                                let byte_bits = &bits[bit_start..bit_end];
+                                
+                                let mut byte = 0u8;
+                                for (i, bit) in byte_bits.iter().enumerate() {
+                                    if *bit {
+                                        byte |= 1 << (7 - i);
+                                    }
+                                }
+                                
+                                let local_byte_idx = byte_idx - row_start;
+                                let bit_offset = local_byte_idx * 8;
 
-                            // Draw border
-                            ui.painter().rect_stroke(
-                                rect,
-                                2.0,
-                                Stroke::new(1.0, Color32::from_gray(100)),
-                                egui::epaint::StrokeKind::Middle
-                            );
+                                // Find which column this byte belongs to
+                                let column_color = self.find_column_color(bit_offset);
 
-                            // Show tooltip with bit offset
-                            if response.hovered() {
-                                response.on_hover_ui(|ui| {
-                                    ui.label(format!("Byte: {}\nBit offset: {}", byte_idx, byte_idx * 8));
-                                    ui.label(format!("Value: 0x{:02X} ({})", byte, byte));
-                                    ui.label(format!("Binary: {:08b}", byte));
-                                });
+                                let (rect, response) = ui.allocate_exact_size(
+                                    Vec2::new(byte_width, byte_height),
+                                    Sense::hover(),
+                                );
+
+                                // Draw background color if in a column
+                                if let Some(color) = column_color {
+                                    ui.painter().rect_filled(
+                                        rect,
+                                        2.0,
+                                        Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 40)
+                                    );
+                                }
+
+                                // Draw byte value
+                                ui.painter().text(
+                                    rect.center(),
+                                    egui::Align2::CENTER_CENTER,
+                                    format!("{:02X}", byte),
+                                    egui::FontId::monospace(self.byte_size),
+                                    if column_color.is_some() { Color32::BLACK } else { Color32::DARK_GRAY }
+                                );
+
+                                // Draw border
+                                ui.painter().rect_stroke(
+                                    rect,
+                                    2.0,
+                                    Stroke::new(1.0, Color32::from_gray(100)),
+                                    egui::epaint::StrokeKind::Middle
+                                );
+
+                                // Show tooltip with bit offset
+                                if response.hovered() {
+                                    response.on_hover_ui(|ui| {
+                                        ui.label(format!("Byte: {}\nBit offset: {}", byte_idx, byte_idx * 8));
+                                        ui.label(format!("Value: 0x{:02X} ({})", byte, byte));
+                                        ui.label(format!("Binary: {:08b}", byte));
+                                    });
+                                }
                             }
-                        }
-                    });
-                }
-            });
+                        });
+                    }
+                },
+            );
     }
 
     fn render_column_headers(&self, ui: &mut egui::Ui, bytes_per_row: usize, byte_width: f32, offset_width: f32, header_height: f32) {
