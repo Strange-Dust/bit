@@ -283,6 +283,7 @@ mod bit_operation_tests {
         let input = bitvec![u8, Msb0; 1, 0, 1, 0];
         let op = BitOperation::InvertBits {
             name: "test".to_string(),
+            enabled: true,
         };
         let result = op.apply(&input);
         assert_eq!(result, bitvec![u8, Msb0; 0, 1, 0, 1]);
@@ -295,6 +296,7 @@ mod bit_operation_tests {
         let op = BitOperation::TakeSkipSequence {
             name: "test".to_string(),
             sequence: seq,
+            enabled: true,
         };
         let result = op.apply(&input);
         // t2: 10, s1: skip, t2: 01, s1: skip (end)
@@ -305,6 +307,7 @@ mod bit_operation_tests {
     fn test_operation_name() {
         let op = BitOperation::InvertBits {
             name: "MyInvert".to_string(),
+            enabled: true,
         };
         assert_eq!(op.name(), "MyInvert");
     }
@@ -313,6 +316,7 @@ mod bit_operation_tests {
     fn test_operation_description() {
         let op = BitOperation::InvertBits {
             name: "test".to_string(),
+            enabled: true,
         };
         assert_eq!(op.description(), "Inverts all bits");
     }
@@ -322,6 +326,7 @@ mod bit_operation_tests {
         let op = BitOperation::LoadFile {
             name: "test".to_string(),
             file_path: PathBuf::from("test.bin"),
+            enabled: true,
         };
         assert!(op.description().contains("test.bin"));
     }
@@ -333,6 +338,7 @@ mod bit_operation_tests {
             name: "test".to_string(),
             start: 0,
             end: 5,
+            enabled: true,
         };
         let result = op.apply(&input);
         assert_eq!(result, bitvec![u8, Msb0; 1, 0, 1, 0, 1]);
@@ -345,6 +351,7 @@ mod bit_operation_tests {
             name: "test".to_string(),
             start: 3,
             end: 7,
+            enabled: true,
         };
         let result = op.apply(&input);
         // Bits 3-6 (indices 3,4,5,6)
@@ -358,6 +365,7 @@ mod bit_operation_tests {
             name: "test".to_string(),
             start: 5,
             end: usize::MAX,
+            enabled: true,
         };
         let result = op.apply(&input);
         // From index 5 to end
@@ -371,6 +379,7 @@ mod bit_operation_tests {
             name: "test".to_string(),
             start: 0,
             end: 100,
+            enabled: true,
         };
         let result = op.apply(&input);
         // Should clamp to actual length
@@ -384,6 +393,7 @@ mod bit_operation_tests {
             name: "test".to_string(),
             start: 10,
             end: 20,
+            enabled: true,
         };
         let result = op.apply(&input);
         // start >= end after clamping, should return empty
@@ -397,6 +407,7 @@ mod bit_operation_tests {
             name: "test".to_string(),
             start: 2,
             end: 2,
+            enabled: true,
         };
         let result = op.apply(&input);
         assert_eq!(result.len(), 0);
@@ -409,6 +420,7 @@ mod bit_operation_tests {
             name: "test".to_string(),
             start: 2,
             end: 3,
+            enabled: true,
         };
         let result = op.apply(&input);
         assert_eq!(result, bitvec![u8, Msb0; 1]);
@@ -420,6 +432,7 @@ mod bit_operation_tests {
             name: "test".to_string(),
             start: 100,
             end: 250,
+            enabled: true,
         };
         assert_eq!(op.description(), "Keep bits 100-250");
     }
