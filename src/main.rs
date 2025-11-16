@@ -107,6 +107,97 @@ impl eframe::App for BitApp {
                     });
                 });
         }
+        
+        // Update loading progress
+        self.update_loading_progress();
+        
+        // Update operation processing progress
+        self.update_operation_progress();
+        
+        // Show loading dialog
+        if self.is_loading() {
+            egui::Window::new("Loading File...")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    ui.vertical_centered(|ui| {
+                        if let Some(path) = &self.loading_file_path {
+                            ui.label(format!("Loading: {}", path.file_name().unwrap_or_default().to_string_lossy()));
+                        }
+                        ui.add_space(10.0);
+                        
+                        // Progress bar
+                        let progress_bar = egui::ProgressBar::new(self.loading_progress)
+                            .show_percentage()
+                            .desired_width(300.0);
+                        ui.add(progress_bar);
+                        
+                        ui.add_space(5.0);
+                        
+                        // Show loaded/total bytes
+                        let loaded_mb = (self.loading_total as f64 * self.loading_progress as f64) / (1024.0 * 1024.0);
+                        let total_mb = self.loading_total as f64 / (1024.0 * 1024.0);
+                        ui.label(format!("{:.2} MB / {:.2} MB", loaded_mb, total_mb));
+                    });
+                });
+            
+            // Request continuous repaints while loading
+            ctx.request_repaint();
+        }
+        
+        // Show operation processing dialog
+        if self.is_processing_operations() {
+            egui::Window::new("Processing Operations...")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    ui.vertical_centered(|ui| {
+                        ui.label(&self.operation_progress_message);
+                        ui.add_space(10.0);
+                        
+                        // Progress bar
+                        let progress_bar = egui::ProgressBar::new(self.operation_progress)
+                            .show_percentage()
+                            .desired_width(300.0);
+                        ui.add(progress_bar);
+                    });
+                });
+            
+            // Request continuous repaints while processing
+            ctx.request_repaint();
+        }
+        
+        // Show rendering preparation dialog and defer render if needed
+        if self.defer_first_render {
+            egui::Window::new("Preparing View...")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    ui.vertical_centered(|ui| {
+                        ui.label(&self.render_progress_message);
+                        ui.add_space(10.0);
+                        
+                        // Spinner animation
+                        ui.spinner();
+                        
+                        ui.add_space(5.0);
+                        ui.label("This may take a moment for large files...");
+                    });
+                });
+            
+            // Clear the flag and trigger the actual render on the next frame
+            self.defer_first_render = false;
+            self.update_viewer();
+            
+            // Request a repaint to show the view immediately after preparation
+            ctx.request_repaint();
+            
+            // Skip rendering the main UI this frame - just show the "preparing" dialog
+            return;
+        }
 
         // Render UI panels
         ui::top_panel::render(self, ctx);
@@ -381,6 +472,7 @@ fn render_active_operations_section(app: &mut BitApp, ui: &mut egui::Ui) {
                                 let op = app.operations.remove(from);
                                 let insert_pos = if to > from { to - 1 } else { to };
                                 app.operations.insert(insert_pos, op);
+                                app.clear_pattern_matches(); // Operation order changed, clear patterns
                                 app.apply_operations();
                             }
                         }
@@ -391,6 +483,7 @@ fn render_active_operations_section(app: &mut BitApp, ui: &mut egui::Ui) {
 
             if let Some(idx) = to_remove {
                 app.operations.remove(idx);
+                app.clear_pattern_matches(); // Operation removed, clear patterns
                 app.apply_operations();
             }
             
@@ -406,6 +499,7 @@ fn render_active_operations_section(app: &mut BitApp, ui: &mut egui::Ui) {
         }
         if ui.button("🗑 Clear All").clicked() {
             app.operations.clear();
+            app.clear_pattern_matches(); // Operations cleared, clear patterns
             app.processed_bits = app.original_bits.clone();
             app.update_viewer();
         }
@@ -571,24 +665,20 @@ fn render_central_panel(app: &mut BitApp, ctx: &egui::Context) {
                 ui.heading("Open a file to view its bits");
             });
         } else {
+            let bits_to_display = if app.show_original {
+                &app.original_bits
+            } else {
+                &app.processed_bits
+            };
+            
             match app.view_mode {
                 ViewMode::Bit => {
                     app.viewer.show(ui);
                 }
                 ViewMode::Byte => {
-                    let bits_to_display = if app.show_original {
-                        &app.original_bits
-                    } else {
-                        &app.processed_bits
-                    };
-                    app.byte_viewer.render(ui, bits_to_display);
+                    app.byte_viewer.render_with_patterns(ui, bits_to_display, &app.patterns);
                 }
                 ViewMode::Ascii => {
-                    let bits_to_display = if app.show_original {
-                        &app.original_bits
-                    } else {
-                        &app.processed_bits
-                    };
                     app.render_ascii_view(ui, bits_to_display);
                 }
             }

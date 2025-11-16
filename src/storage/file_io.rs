@@ -2,9 +2,75 @@ use bitvec::prelude::*;
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::path::Path;
+use std::sync::mpsc::Sender;
 
 /// Maximum file size to read (1 GB)
 const MAX_FILE_SIZE: u64 = 1024 * 1024 * 1024;
+
+/// Progress callback for file loading
+pub enum LoadProgress {
+    Progress { loaded: u64, total: u64 },
+    Complete(Result<BitVec<u8, Msb0>, String>),
+}
+
+/// Read a file and convert its contents to a bit vector with progress reporting
+/// 
+/// # Errors
+/// 
+/// Returns an error if:
+/// - The file cannot be opened
+/// - The file is larger than MAX_FILE_SIZE
+/// - Reading the file fails
+pub fn read_file_as_bits_with_progress(
+    path: &Path,
+    progress_tx: Sender<LoadProgress>,
+) -> std::io::Result<()> {
+    let result = (|| -> std::io::Result<BitVec<u8, Msb0>> {
+        let file = File::open(path)?;
+        let metadata = file.metadata()?;
+        let total_size = metadata.len();
+        
+        // Check file size
+        if total_size > MAX_FILE_SIZE {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("File too large: {} bytes (max {} bytes)", total_size, MAX_FILE_SIZE)
+            ));
+        }
+        
+        let mut file = file;
+        let mut buffer = Vec::new();
+        let chunk_size = 1024 * 1024; // 1MB chunks
+        let mut total_read: u64 = 0;
+        
+        loop {
+            let mut chunk = vec![0u8; chunk_size];
+            match file.read(&mut chunk)? {
+                0 => break,
+                n => {
+                    buffer.extend_from_slice(&chunk[..n]);
+                    total_read += n as u64;
+                    
+                    // Send progress update
+                    let _ = progress_tx.send(LoadProgress::Progress {
+                        loaded: total_read,
+                        total: total_size,
+                    });
+                }
+            }
+        }
+        
+        let bits = BitVec::<u8, Msb0>::from_vec(buffer);
+        Ok(bits)
+    })();
+    
+    // Send completion message
+    let _ = progress_tx.send(LoadProgress::Complete(
+        result.map_err(|e| e.to_string())
+    ));
+    
+    Ok(())
+}
 
 /// Read a file and convert its contents to a bit vector
 /// 

@@ -1,6 +1,7 @@
 use bitvec::prelude::*;
 use egui::{Color32, Pos2, Rect, Sense, Stroke, Vec2};
 use serde::{Deserialize, Serialize};
+use crate::analysis::Pattern;
 
 /// Represents a labeled column in the byte view
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -107,6 +108,11 @@ impl ByteViewer {
 
     /// Render the byte view with virtualization for large files
     pub fn render(&mut self, ui: &mut egui::Ui, bits: &BitVec<u8, Msb0>) {
+        self.render_with_patterns(ui, bits, &[]);
+    }
+
+    /// Render the byte view with pattern highlighting
+    pub fn render_with_patterns(&mut self, ui: &mut egui::Ui, bits: &BitVec<u8, Msb0>, patterns: &[Pattern]) {
         if bits.is_empty() {
             ui.label("No data to display");
             return;
@@ -172,16 +178,36 @@ impl ByteViewer {
                                 let local_byte_idx = byte_idx - row_start;
                                 let bit_offset = local_byte_idx * 8;
 
-                                // Find which column this byte belongs to
-                                let column_color = self.find_column_color(bit_offset);
+                                // Check for pattern matches first (higher priority)
+                                let pattern_match = self.find_pattern_match(bit_start, bit_end, patterns);
+                                
+                                // Find which column this byte belongs to (lower priority)
+                                let column_color = if pattern_match.is_none() {
+                                    self.find_column_color(bit_offset)
+                                } else {
+                                    None
+                                };
 
                                 let (rect, response) = ui.allocate_exact_size(
                                     Vec2::new(byte_width, byte_height),
                                     Sense::hover(),
                                 );
 
-                                // Draw background color if in a column
-                                if let Some(color) = column_color {
+                                // Draw background color - pattern match takes priority over column
+                                if let Some((pattern_color, _)) = pattern_match {
+                                    // Pattern match - bright highlight
+                                    ui.painter().rect_filled(
+                                        rect,
+                                        2.0,
+                                        Color32::from_rgba_unmultiplied(
+                                            pattern_color.r(),
+                                            pattern_color.g(),
+                                            pattern_color.b(),
+                                            120
+                                        )
+                                    );
+                                } else if let Some(color) = column_color {
+                                    // Column color - subtle highlight
                                     ui.painter().rect_filled(
                                         rect,
                                         2.0,
@@ -190,28 +216,47 @@ impl ByteViewer {
                                 }
 
                                 // Draw byte value
+                                let text_color = if pattern_match.is_some() {
+                                    Color32::BLACK
+                                } else if column_color.is_some() {
+                                    Color32::BLACK
+                                } else {
+                                    Color32::DARK_GRAY
+                                };
+                                
                                 ui.painter().text(
                                     rect.center(),
                                     egui::Align2::CENTER_CENTER,
                                     format!("{:02X}", byte),
                                     egui::FontId::monospace(self.byte_size),
-                                    if column_color.is_some() { Color32::BLACK } else { Color32::DARK_GRAY }
+                                    text_color
                                 );
 
-                                // Draw border
+                                // Draw border - thicker for pattern matches
+                                let border_stroke = if let Some((pattern_color, _)) = pattern_match {
+                                    Stroke::new(2.0, pattern_color)
+                                } else {
+                                    Stroke::new(1.0, Color32::from_gray(100))
+                                };
+                                
                                 ui.painter().rect_stroke(
                                     rect,
                                     2.0,
-                                    Stroke::new(1.0, Color32::from_gray(100)),
+                                    border_stroke,
                                     egui::epaint::StrokeKind::Middle
                                 );
 
-                                // Show tooltip with bit offset
+                                // Show tooltip with bit offset and pattern info
                                 if response.hovered() {
                                     response.on_hover_ui(|ui| {
                                         ui.label(format!("Byte: {}\nBit offset: {}", byte_idx, byte_idx * 8));
                                         ui.label(format!("Value: 0x{:02X} ({})", byte, byte));
                                         ui.label(format!("Binary: {:08b}", byte));
+                                        
+                                        if let Some((_, pattern_name)) = pattern_match {
+                                            ui.separator();
+                                            ui.label(format!("🎯 Pattern: {}", pattern_name));
+                                        }
                                     });
                                 }
                             }
@@ -292,6 +337,36 @@ impl ByteViewer {
         for column in &self.config.columns {
             if bit_offset >= column.bit_start && bit_offset < column.bit_end {
                 return Some(column.color32());
+            }
+        }
+        None
+    }
+
+    /// Check if a byte range overlaps with any pattern matches
+    /// Returns (is_match, pattern_color, pattern_name) if there's a match
+    fn find_pattern_match(&self, bit_start: usize, bit_end: usize, patterns: &[Pattern]) -> Option<(Color32, String)> {
+        // Predefined colors for different patterns
+        let pattern_colors = [
+            Color32::from_rgb(255, 100, 100),  // Red
+            Color32::from_rgb(100, 255, 100),  // Green
+            Color32::from_rgb(100, 100, 255),  // Blue
+            Color32::from_rgb(255, 255, 100),  // Yellow
+            Color32::from_rgb(255, 100, 255),  // Magenta
+            Color32::from_rgb(100, 255, 255),  // Cyan
+            Color32::from_rgb(255, 150, 100),  // Orange
+            Color32::from_rgb(150, 100, 255),  // Purple
+        ];
+
+        for (pattern_idx, pattern) in patterns.iter().enumerate() {
+            for match_info in &pattern.matches {
+                let match_start = match_info.position;
+                let match_end = match_info.position + pattern.bits.len();
+                
+                // Check if this byte overlaps with the pattern match
+                if bit_start < match_end && bit_end > match_start {
+                    let color = pattern_colors[pattern_idx % pattern_colors.len()];
+                    return Some((color, pattern.name.clone()));
+                }
             }
         }
         None

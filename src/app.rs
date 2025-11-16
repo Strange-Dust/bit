@@ -3,10 +3,26 @@
 use crate::analysis::{Pattern, PatternFormat};
 use crate::core::{ViewMode, OperationType};
 use crate::processing::{BitOperation, OperationSequence, WorksheetOperation};
-use crate::storage::{read_file_as_bits, write_bits_to_file, AppSession, AppSettings, Worksheet};
+use crate::storage::{read_file_as_bits, read_file_as_bits_with_progress, write_bits_to_file, AppSession, AppSettings, Worksheet, LoadProgress};
 use crate::viewers::{BitViewer, ByteViewer};
 use bitvec::prelude::*;
 use std::path::PathBuf;
+use std::sync::mpsc::{channel, Receiver};
+use std::thread;
+
+/// Message from async operation processing
+pub enum OperationProgress {
+    LoadingFile { path: PathBuf, loaded: u64, total: u64 },
+    ProcessingOperation { index: usize, total: usize, description: String },
+    Complete(Result<BitVec<u8, Msb0>, String>),
+}
+
+/// Message for view rendering progress
+pub enum RenderProgress {
+    Preparing { total_items: usize },
+    Rendering { rendered: usize, total: usize, description: String },
+    Complete,
+}
 
 pub struct BitApp {
     pub original_bits: BitVec<u8, Msb0>,
@@ -71,6 +87,23 @@ pub struct BitApp {
     pub column_editor_bit_start: String,
     pub column_editor_bit_end: String,
     pub column_editor_color: [u8; 3],
+    
+    // File loading state
+    pub loading_receiver: Option<Receiver<LoadProgress>>,
+    pub loading_file_path: Option<PathBuf>,
+    pub loading_progress: f32,
+    pub loading_total: u64,
+    
+    // Operation processing state
+    pub operation_receiver: Option<Receiver<OperationProgress>>,
+    pub operation_progress_message: String,
+    pub operation_progress: f32,
+    
+    // Rendering state
+    pub is_rendering: bool,
+    pub render_progress_message: String,
+    pub render_progress: f32,
+    pub defer_first_render: bool, // Defer first render to show "preparing" message
 }
 
 impl Default for BitApp {
@@ -137,6 +170,17 @@ impl Default for BitApp {
             column_editor_bit_start: String::from("0"),
             column_editor_bit_end: String::from("7"),
             column_editor_color: [100, 150, 200],
+            loading_receiver: None,
+            loading_file_path: None,
+            loading_progress: 0.0,
+            loading_total: 0,
+            operation_receiver: None,
+            operation_progress_message: String::new(),
+            operation_progress: 0.0,
+            is_rendering: false,
+            render_progress_message: String::new(),
+            render_progress: 0.0,
+            defer_first_render: false,
         }
     }
 }
@@ -167,7 +211,36 @@ impl BitApp {
         self.load_from_worksheet();
     }
     
+    /// Clear all pattern matches
+    pub fn clear_pattern_matches(&mut self) {
+        for pattern in &mut self.patterns {
+            pattern.matches.clear();
+        }
+        // Also clear bit viewer highlights since they're based on pattern matches
+        self.viewer.clear_highlights();
+    }
+    
     pub fn apply_operations(&mut self) {
+        // Don't clear pattern matches here - they should only be cleared when operations list changes
+        // Pattern matches are based on the processed bits, which may not change even if we reapply
+        
+        // Check if we need async processing (large files in operations)
+        let needs_async = self.operations.iter().any(|op| {
+            if let BitOperation::LoadFile { file_path, .. } = op {
+                if let Ok(metadata) = std::fs::metadata(file_path) {
+                    return metadata.len() > 10 * 1024 * 1024; // >10MB
+                }
+            }
+            false
+        });
+        
+        if needs_async {
+            // Use async processing for heavy operations
+            self.start_async_operations();
+            return;
+        }
+        
+        // Otherwise use synchronous processing (fast)
         // Check if we have a MultiWorksheetLoad or LoadFile operation
         let has_multiworksheet = self.operations.iter().any(|op| matches!(op, BitOperation::MultiWorksheetLoad { .. }));
         let has_loadfile = self.operations.iter().any(|op| matches!(op, BitOperation::LoadFile { .. }));
@@ -185,7 +258,8 @@ impl BitApp {
                                 result.extend(bits);
                             }
                             Err(e) => {
-                                self.error_message = Some(format!("Failed to load file: {}", e));
+                                self.error_message = Some(format!("Failed to load file {}: {}", 
+                                    file_path.display(), e));
                                 continue; // Skip if file can't be loaded
                             }
                         }
@@ -245,11 +319,312 @@ impl BitApp {
     pub fn clear_error(&mut self) {
         self.error_message = None;
     }
-    
+
     pub fn set_error(&mut self, message: String) {
         self.error_message = Some(message);
     }
     
+    /// Start loading a file asynchronously with progress reporting
+    pub fn start_loading_file(&mut self, path: PathBuf) {
+        let (tx, rx) = channel();
+        let path_clone = path.clone();
+        
+        // Spawn background thread to load file
+        thread::spawn(move || {
+            let _ = read_file_as_bits_with_progress(&path_clone, tx);
+        });
+        
+        self.loading_receiver = Some(rx);
+        self.loading_file_path = Some(path);
+        self.loading_progress = 0.0;
+        self.loading_total = 0;
+    }
+    
+    /// Check for loading progress updates and handle completion
+    pub fn update_loading_progress(&mut self) {
+        let mut should_clear = false;
+        let mut result_bits: Option<Result<BitVec<u8, Msb0>, String>> = None;
+        let mut path_to_load: Option<PathBuf> = None;
+        
+        if let Some(receiver) = &self.loading_receiver {
+            // Process all available messages
+            while let Ok(msg) = receiver.try_recv() {
+                match msg {
+                    LoadProgress::Progress { loaded, total } => {
+                        self.loading_total = total;
+                        self.loading_progress = if total > 0 {
+                            loaded as f32 / total as f32
+                        } else {
+                            0.0
+                        };
+                    }
+                    LoadProgress::Complete(result) => {
+                        // Loading finished
+                        should_clear = true;
+                        result_bits = Some(result);
+                        path_to_load = self.loading_file_path.clone();
+                    }
+                }
+            }
+        }
+        
+        // Handle completion outside of the borrow
+        if should_clear {
+            self.loading_receiver = None;
+            self.loading_file_path = None;
+            
+            if let Some(result) = result_bits {
+                match result {
+                    Ok(bits) => {
+                        self.original_bits = bits.clone();
+                        self.processed_bits = bits;
+                        self.current_file_path = path_to_load;
+                        self.error_message = None;
+                        self.clear_pattern_matches(); // New file loaded, clear old patterns
+                        self.apply_operations();
+                        
+                        // If we loaded a large file, defer the first render to show "preparing" message
+                        if self.original_bits.len() > 10_000_000 {
+                            self.defer_first_render = true;
+                            self.render_progress_message = "Preparing view...".to_string();
+                        } else {
+                            self.update_viewer();
+                        }
+                    }
+                    Err(e) => {
+                        self.error_message = Some(format!("Failed to load file: {}", e));
+                    }
+                }
+            }
+        }
+    }
+    
+    /// Check if currently loading a file
+    pub fn is_loading(&self) -> bool {
+        self.loading_receiver.is_some()
+    }
+    
+    /// Check if currently processing operations
+    pub fn is_processing_operations(&self) -> bool {
+        self.operation_receiver.is_some()
+    }
+    
+    /// Start processing operations asynchronously
+    pub fn start_async_operations(&mut self) {
+        let operations = self.operations.clone();
+        let original_bits = self.original_bits.clone();
+        let worksheets = self.worksheets.clone();
+        let current_worksheet_index = self.current_worksheet_index;
+        
+        let (tx, rx) = channel();
+        
+        thread::spawn(move || {
+            let _ = Self::process_operations_async(
+                operations,
+                original_bits,
+                worksheets,
+                current_worksheet_index,
+                tx
+            );
+        });
+        
+        self.operation_receiver = Some(rx);
+        self.operation_progress = 0.0;
+        self.operation_progress_message = "Starting...".to_string();
+    }
+    
+    /// Process operations in background thread with progress reporting
+    fn process_operations_async(
+        operations: Vec<BitOperation>,
+        original_bits: BitVec<u8, Msb0>,
+        worksheets: Vec<Worksheet>,
+        current_worksheet_index: usize,
+        tx: std::sync::mpsc::Sender<OperationProgress>,
+    ) -> std::io::Result<()> {
+        let result = (|| -> Result<BitVec<u8, Msb0>, String> {
+            let has_multiworksheet = operations.iter().any(|op| matches!(op, BitOperation::MultiWorksheetLoad { .. }));
+            let has_loadfile = operations.iter().any(|op| matches!(op, BitOperation::LoadFile { .. }));
+            
+            if has_multiworksheet || has_loadfile {
+                let mut result = BitVec::new();
+                let total_ops = operations.len();
+                
+                for (idx, op) in operations.iter().enumerate() {
+                    match op {
+                        BitOperation::LoadFile { file_path, name } => {
+                            let _ = tx.send(OperationProgress::ProcessingOperation {
+                                index: idx + 1,
+                                total: total_ops,
+                                description: format!("Loading file: {}", name),
+                            });
+                            
+                            // Check file size for progress reporting
+                            if let Ok(metadata) = std::fs::metadata(file_path) {
+                                let file_size = metadata.len();
+                                
+                                if file_size > 10 * 1024 * 1024 {
+                                    // Large file - use progress reporting
+                                    let (file_tx, file_rx) = channel();
+                                    let path_clone = file_path.clone();
+                                    
+                                    // Load file with progress
+                                    thread::spawn(move || {
+                                        let _ = read_file_as_bits_with_progress(&path_clone, file_tx);
+                                    });
+                                    
+                                    // Forward progress messages
+                                    loop {
+                                        match file_rx.recv() {
+                                            Ok(LoadProgress::Progress { loaded, total }) => {
+                                                let _ = tx.send(OperationProgress::LoadingFile {
+                                                    path: file_path.clone(),
+                                                    loaded,
+                                                    total,
+                                                });
+                                            }
+                                            Ok(LoadProgress::Complete(Ok(bits))) => {
+                                                result.extend(bits);
+                                                break;
+                                            }
+                                            Ok(LoadProgress::Complete(Err(e))) => {
+                                                return Err(format!("Failed to load file {}: {}", file_path.display(), e));
+                                            }
+                                            Err(_) => {
+                                                return Err(format!("Failed to load file {}: channel closed", file_path.display()));
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    // Small file - load directly
+                                    match read_file_as_bits(file_path) {
+                                        Ok(bits) => result.extend(bits),
+                                        Err(e) => return Err(format!("Failed to load file {}: {}", file_path.display(), e)),
+                                    }
+                                }
+                            } else {
+                                // Can't get metadata, try loading anyway
+                                match read_file_as_bits(file_path) {
+                                    Ok(bits) => result.extend(bits),
+                                    Err(e) => return Err(format!("Failed to load file {}: {}", file_path.display(), e)),
+                                }
+                            }
+                        }
+                        BitOperation::MultiWorksheetLoad { worksheet_operations, .. } => {
+                            let _ = tx.send(OperationProgress::ProcessingOperation {
+                                index: idx + 1,
+                                total: total_ops,
+                                description: "Processing multi-worksheet load".to_string(),
+                            });
+                            
+                            for wo in worksheet_operations {
+                                if wo.worksheet_index < worksheets.len() && wo.worksheet_index != current_worksheet_index {
+                                    let source_bits = if let Some(file_path) = &worksheets[wo.worksheet_index].file_path {
+                                        match read_file_as_bits(file_path) {
+                                            Ok(bits) => bits,
+                                            Err(e) => return Err(format!("Failed to load worksheet {}: {}", wo.worksheet_index + 1, e)),
+                                        }
+                                    } else {
+                                        continue;
+                                    };
+                                    
+                                    let processed = wo.sequence.apply(&source_bits);
+                                    result.extend(processed);
+                                }
+                            }
+                        }
+                        _ => {
+                            let _ = tx.send(OperationProgress::ProcessingOperation {
+                                index: idx + 1,
+                                total: total_ops,
+                                description: format!("Applying operation {}/{}", idx + 1, total_ops),
+                            });
+                            result = op.apply(&result);
+                        }
+                    }
+                }
+                
+                Ok(result)
+            } else {
+                if original_bits.is_empty() {
+                    return Ok(BitVec::new());
+                }
+                
+                let mut result = original_bits;
+                let total_ops = operations.len();
+                
+                for (idx, op) in operations.iter().enumerate() {
+                    let _ = tx.send(OperationProgress::ProcessingOperation {
+                        index: idx + 1,
+                        total: total_ops,
+                        description: format!("Applying operation {}/{}", idx + 1, total_ops),
+                    });
+                    result = op.apply(&result);
+                }
+                
+                Ok(result)
+            }
+        })();
+        
+        let _ = tx.send(OperationProgress::Complete(result));
+        Ok(())
+    }
+    
+    /// Update operation processing progress
+    pub fn update_operation_progress(&mut self) {
+        let mut should_clear = false;
+        let mut result_bits: Option<Result<BitVec<u8, Msb0>, String>> = None;
+        
+        if let Some(receiver) = &self.operation_receiver {
+            while let Ok(msg) = receiver.try_recv() {
+                match msg {
+                    OperationProgress::LoadingFile { path, loaded, total } => {
+                        let progress = if total > 0 { loaded as f32 / total as f32 } else { 0.0 };
+                        self.operation_progress = progress;
+                        self.operation_progress_message = format!(
+                            "Loading {}: {:.1} MB / {:.1} MB",
+                            path.file_name().unwrap_or_default().to_string_lossy(),
+                            loaded as f64 / (1024.0 * 1024.0),
+                            total as f64 / (1024.0 * 1024.0)
+                        );
+                    }
+                    OperationProgress::ProcessingOperation { index, total, description } => {
+                        self.operation_progress = index as f32 / total as f32;
+                        self.operation_progress_message = description;
+                    }
+                    OperationProgress::Complete(result) => {
+                        should_clear = true;
+                        result_bits = Some(result);
+                    }
+                }
+            }
+        }
+        
+        if should_clear {
+            self.operation_receiver = None;
+            
+            if let Some(result) = result_bits {
+                match result {
+                    Ok(bits) => {
+                        self.processed_bits = bits;
+                        self.show_original = false;
+                        self.error_message = None;
+                        
+                        // If we processed a large amount of data, defer the first render to show "preparing" message
+                        if self.processed_bits.len() > 10_000_000 {
+                            self.defer_first_render = true;
+                            self.render_progress_message = "Preparing view...".to_string();
+                        } else {
+                            self.update_viewer();
+                        }
+                    }
+                    Err(e) => {
+                        self.error_message = Some(e);
+                    }
+                }
+            }
+        }
+    }
+
     pub fn sync_to_worksheet(&mut self) {
         let file_path = self.current_file_path.clone();
         let operations = self.operations.clone();
@@ -264,6 +639,18 @@ impl BitApp {
         // Load file if specified
         if let Some(path) = &worksheet.file_path {
             if path.exists() {
+                // Check file size to decide if we should use async loading
+                if let Ok(metadata) = std::fs::metadata(path) {
+                    // Use async loading for files larger than 10MB
+                    if metadata.len() > 10 * 1024 * 1024 {
+                        self.start_loading_file(path.clone());
+                        // Operations will be applied when loading completes
+                        self.operations = worksheet.operations.clone();
+                        return;
+                    }
+                }
+                
+                // For smaller files, load synchronously
                 match read_file_as_bits(path) {
                     Ok(bits) => {
                         self.original_bits = bits.clone();
@@ -284,6 +671,7 @@ impl BitApp {
         
         // Load operations
         self.operations = worksheet.operations.clone();
+        self.clear_pattern_matches(); // New worksheet loaded, clear patterns
         self.apply_operations();
         self.update_viewer();
     }
@@ -502,11 +890,13 @@ impl BitApp {
             };
 
             if let Some(index) = self.editing_operation_index {
-                // Editing existing operation
+                // Editing existing operation - data will change
                 self.operations[index] = new_operation;
+                self.clear_pattern_matches();
             } else {
-                // Adding new operation
+                // Adding new operation - data will change
                 self.operations.push(new_operation);
+                self.clear_pattern_matches();
             }
 
             self.show_operation_menu = None;
@@ -545,6 +935,18 @@ impl BitApp {
             return;
         }
 
+        // Predefined colors for different patterns (same as byte viewer)
+        let pattern_colors = [
+            egui::Color32::from_rgb(255, 100, 100),  // Red
+            egui::Color32::from_rgb(100, 255, 100),  // Green
+            egui::Color32::from_rgb(100, 100, 255),  // Blue
+            egui::Color32::from_rgb(255, 255, 100),  // Yellow
+            egui::Color32::from_rgb(255, 100, 255),  // Magenta
+            egui::Color32::from_rgb(100, 255, 255),  // Cyan
+            egui::Color32::from_rgb(255, 150, 100),  // Orange
+            egui::Color32::from_rgb(150, 100, 255),  // Purple
+        ];
+
         // Calculate total size WITHOUT converting all bits
         let total_bits = bits.len();
         let total_bytes = (total_bits + 7) / 8;
@@ -569,6 +971,13 @@ impl BitApp {
                     egui::ScrollArea::horizontal()
                         .id_salt("ascii_viewer_horizontal")
                         .show(ui, |ui| {
+                            // Set a light background for better text visibility
+                            ui.painter().rect_filled(
+                                ui.max_rect(),
+                                0.0,
+                                egui::Color32::from_rgb(245, 245, 245)
+                            );
+                            
                             // Only render visible rows
                             for row in row_range {
                                 ui.horizontal(|ui| {
@@ -602,6 +1011,25 @@ impl BitApp {
                                             }
                                         }
                                         
+                                        // Check if this byte is part of any pattern match
+                                        let mut pattern_match: Option<(egui::Color32, String)> = None;
+                                        for (pattern_idx, pattern) in self.patterns.iter().enumerate() {
+                                            for match_info in &pattern.matches {
+                                                let match_start = match_info.position;
+                                                let match_end = match_info.position + pattern.bits.len();
+                                                
+                                                // Check if this byte overlaps with the pattern match
+                                                if bit_start < match_end && bit_end > match_start {
+                                                    let color = pattern_colors[pattern_idx % pattern_colors.len()];
+                                                    pattern_match = Some((color, pattern.name.clone()));
+                                                    break;
+                                                }
+                                            }
+                                            if pattern_match.is_some() {
+                                                break;
+                                            }
+                                        }
+                                        
                                         let ch = if byte >= 32 && byte <= 126 {
                                             byte as char
                                         } else {
@@ -613,8 +1041,24 @@ impl BitApp {
                                             egui::Sense::hover(),
                                         );
                                         
-                                        // Choose color based on character type
-                                        let text_color = if byte >= 32 && byte <= 126 {
+                                        // Draw background highlight for pattern matches
+                                        if let Some((pattern_color, _)) = pattern_match {
+                                            ui.painter().rect_filled(
+                                                rect,
+                                                2.0,
+                                                egui::Color32::from_rgba_unmultiplied(
+                                                    pattern_color.r(),
+                                                    pattern_color.g(),
+                                                    pattern_color.b(),
+                                                    120
+                                                )
+                                            );
+                                        }
+                                        
+                                        // Choose color based on character type and pattern match
+                                        let text_color = if pattern_match.is_some() {
+                                            egui::Color32::BLACK
+                                        } else if byte >= 32 && byte <= 126 {
                                             egui::Color32::BLACK
                                         } else {
                                             egui::Color32::DARK_GRAY
@@ -636,6 +1080,11 @@ impl BitApp {
                                                 ui.label(format!("Value: 0x{:02X} ({})", byte, byte));
                                                 ui.label(format!("ASCII: '{}'", ch));
                                                 ui.label(format!("Binary: {:08b}", byte));
+                                                
+                                                if let Some((_, pattern_name)) = pattern_match {
+                                                    ui.separator();
+                                                    ui.label(format!("🎯 Pattern: {}", pattern_name));
+                                                }
                                             });
                                         }
                                     }
