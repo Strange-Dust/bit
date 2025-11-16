@@ -1,6 +1,7 @@
 use bitvec::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use super::interleaver::{BlockInterleaverConfig, ConvolutionalInterleaverConfig, SymbolInterleaverConfig, InterleaverType};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Operation {
@@ -49,6 +50,13 @@ pub enum BitOperation {
         start: usize,
         end: usize,
     },
+    InterleaveBits {
+        name: String,
+        interleaver_type: InterleaverType,
+        block_config: Option<BlockInterleaverConfig>,
+        convolutional_config: Option<ConvolutionalInterleaverConfig>,
+        symbol_config: Option<SymbolInterleaverConfig>,
+    },
     // Future operations:
     // FindPattern { name: String, pattern: String, highlight: bool },
     // Replace { name: String, from_pattern: String, to_pattern: String },
@@ -70,6 +78,7 @@ impl BitOperation {
             BitOperation::InvertBits { name } => name,
             BitOperation::MultiWorksheetLoad { name, .. } => name,
             BitOperation::TruncateBits { name, .. } => name,
+            BitOperation::InterleaveBits { name, .. } => name,
         }
     }
 
@@ -85,6 +94,43 @@ impl BitOperation {
             }
             BitOperation::TruncateBits { start, end, .. } => {
                 format!("Keep bits {}-{}", start, end)
+            }
+            BitOperation::InterleaveBits { interleaver_type, block_config, convolutional_config, symbol_config, .. } => {
+                match interleaver_type {
+                    InterleaverType::Block => {
+                        if let Some(cfg) = block_config {
+                            let dir = match cfg.direction {
+                                crate::processing::InterleaverDirection::Interleave => "Interleave",
+                                crate::processing::InterleaverDirection::Deinterleave => "Deinterleave",
+                            };
+                            format!("Block {}×{} {}", cfg.block_size, cfg.depth, dir)
+                        } else {
+                            "Block interleaver".to_string()
+                        }
+                    }
+                    InterleaverType::Convolutional => {
+                        if let Some(cfg) = convolutional_config {
+                            let dir = match cfg.direction {
+                                crate::processing::InterleaverDirection::Interleave => "Interleave",
+                                crate::processing::InterleaverDirection::Deinterleave => "Deinterleave",
+                            };
+                            format!("Conv B={} M={} {}", cfg.branches, cfg.delay_increment, dir)
+                        } else {
+                            "Convolutional interleaver".to_string()
+                        }
+                    }
+                    InterleaverType::Symbol => {
+                        if let Some(cfg) = symbol_config {
+                            let dir = match cfg.direction {
+                                crate::processing::InterleaverDirection::Interleave => "Interleave",
+                                crate::processing::InterleaverDirection::Deinterleave => "Deinterleave",
+                            };
+                            format!("Symbol {}×{} ({}bit) {}", cfg.block_size, cfg.depth, cfg.symbol_size, dir)
+                        } else {
+                            "Symbol interleaver".to_string()
+                        }
+                    }
+                }
             }
         }
     }
@@ -117,6 +163,31 @@ impl BitOperation {
                 }
                 
                 input[actual_start..actual_end].to_bitvec()
+            }
+            BitOperation::InterleaveBits { interleaver_type, block_config, convolutional_config, symbol_config, .. } => {
+                match interleaver_type {
+                    InterleaverType::Block => {
+                        if let Some(cfg) = block_config {
+                            cfg.apply(input)
+                        } else {
+                            input.clone()
+                        }
+                    }
+                    InterleaverType::Convolutional => {
+                        if let Some(cfg) = convolutional_config {
+                            cfg.apply(input)
+                        } else {
+                            input.clone()
+                        }
+                    }
+                    InterleaverType::Symbol => {
+                        if let Some(cfg) = symbol_config {
+                            cfg.apply(input)
+                        } else {
+                            input.clone()
+                        }
+                    }
+                }
             }
         }
     }

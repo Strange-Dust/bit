@@ -24,6 +24,7 @@ pub enum OperationType {
     InvertBits,
     MultiWorksheetLoad,
     TruncateBits,
+    InterleaveBits,
 }
 
 impl OperationType {
@@ -34,6 +35,7 @@ impl OperationType {
             OperationType::InvertBits => "Invert Bits",
             OperationType::MultiWorksheetLoad => "Multi-Worksheet Load",
             OperationType::TruncateBits => "Truncate Bits",
+            OperationType::InterleaveBits => "Interleave Bits",
         }
     }
 
@@ -44,6 +46,7 @@ impl OperationType {
             OperationType::InvertBits => "🔄",
             OperationType::MultiWorksheetLoad => "📚",
             OperationType::TruncateBits => "✂️",
+            OperationType::InterleaveBits => "🔀",
         }
     }
 
@@ -54,6 +57,7 @@ impl OperationType {
             OperationType::InvertBits => "Invert all bits (0→1, 1→0)",
             OperationType::MultiWorksheetLoad => "Load bits from multiple worksheets with operations",
             OperationType::TruncateBits => "Keep bits in a range and discard the rest",
+            OperationType::InterleaveBits => "Interleave/de-interleave bits for error resilience",
         }
     }
     
@@ -65,6 +69,7 @@ impl OperationType {
             OperationType::InvertBits,
             OperationType::MultiWorksheetLoad,
             OperationType::TruncateBits,
+            OperationType::InterleaveBits,
         ]
     }
 }

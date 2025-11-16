@@ -199,6 +199,7 @@ pub fn render_operation_windows(app: &mut BitApp, ctx: &egui::Context) {
                     OperationType::InvertBits => render_invert_editor(app, ui),
                     OperationType::MultiWorksheetLoad => render_multiworksheet_editor(app, ui),
                     OperationType::TruncateBits => render_truncate_editor(app, ui),
+                    OperationType::InterleaveBits => render_interleave_editor(app, ui),
                 }
             });
         
@@ -565,3 +566,360 @@ pub fn render_column_editor_window(app: &mut BitApp, ctx: &egui::Context) {
         }
     }
 }
+
+fn render_interleave_editor(app: &mut BitApp, ui: &mut egui::Ui) {
+    ui.heading("Bit Interleaving / De-interleaving");
+    ui.separator();
+    
+    ui.horizontal(|ui| {
+        ui.label("Name:");
+        ui.text_edit_singleline(&mut app.interleave_name);
+    });
+    
+    ui.add_space(8.0);
+    
+    // Type selection
+    ui.horizontal(|ui| {
+        ui.label("Interleaver Type:");
+        ui.radio_value(&mut app.interleave_type, crate::processing::InterleaverType::Block, "Block");
+        ui.radio_value(&mut app.interleave_type, crate::processing::InterleaverType::Convolutional, "Convolutional");
+        ui.radio_value(&mut app.interleave_type, crate::processing::InterleaverType::Symbol, "Symbol");
+    });
+    
+    ui.add_space(4.0);
+    
+    // Direction selection
+    ui.horizontal(|ui| {
+        ui.label("Direction:");
+        ui.radio_value(&mut app.interleave_direction, crate::processing::InterleaverDirection::Interleave, "Interleave");
+        ui.radio_value(&mut app.interleave_direction, crate::processing::InterleaverDirection::Deinterleave, "De-interleave");
+    });
+    
+    ui.add_space(8.0);
+    ui.separator();
+    
+    // Parameters based on type
+    match app.interleave_type {
+        crate::processing::InterleaverType::Block => {
+            ui.label("📦 Block Interleaver Parameters:");
+            ui.add_space(4.0);
+            
+            ui.horizontal(|ui| {
+                ui.label("Block Size (columns):");
+                let block_response = ui.text_edit_singleline(&mut app.interleave_block_size);
+                
+                if block_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    if let Ok(result) = eval_expression(&app.interleave_block_size) {
+                        app.interleave_block_size = result.to_string();
+                    }
+                }
+            });
+            
+            ui.horizontal(|ui| {
+                ui.label("Depth (rows):      ");
+                let depth_response = ui.text_edit_singleline(&mut app.interleave_depth);
+                
+                if depth_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    if let Ok(result) = eval_expression(&app.interleave_depth) {
+                        app.interleave_depth = result.to_string();
+                    }
+                }
+            });
+            
+            ui.add_space(8.0);
+            
+            // Visual preview
+            ui.group(|ui| {
+                ui.label("📊 Visual Preview:");
+                ui.add_space(4.0);
+                
+                if let (Ok(block_size), Ok(depth)) = (
+                    app.interleave_block_size.parse::<usize>(),
+                    app.interleave_depth.parse::<usize>()
+                ) {
+                    if block_size > 0 && depth > 0 && block_size <= 16 && depth <= 16 {
+                        ui.label(format!("Matrix: {}×{} = {} bits per block", block_size, depth, block_size * depth));
+                        ui.add_space(4.0);
+                        
+                        match app.interleave_direction {
+                            crate::processing::InterleaverDirection::Interleave => {
+                                ui.label("Write row-wise → Read column-wise:");
+                                ui.add_space(2.0);
+                                render_block_matrix_preview(ui, block_size, depth);
+                            }
+                            crate::processing::InterleaverDirection::Deinterleave => {
+                                ui.label("Write column-wise → Read row-wise:");
+                                ui.add_space(2.0);
+                                render_block_matrix_preview(ui, block_size, depth);
+                            }
+                        }
+                    } else {
+                        ui.label("⚠ Invalid dimensions (max 16×16)");
+                    }
+                } else {
+                    ui.label("⚠ Enter valid numbers for preview");
+                }
+            });
+            
+            ui.add_space(4.0);
+            ui.label("💡 Tips:");
+            ui.label("• Block interleaver rearranges data in matrix blocks");
+            ui.label("• Interleave: Write row-wise, read column-wise");
+            ui.label("• De-interleave: Reverses the process");
+            ui.label("• Example: 8×4 matrix handles 32 bits at a time");
+            ui.label("• Math supported: 2*4, 16/2, 8+4, etc.");
+        }
+        
+        crate::processing::InterleaverType::Convolutional => {
+            ui.label("🔄 Convolutional Interleaver Parameters:");
+            ui.add_space(4.0);
+            
+            ui.horizontal(|ui| {
+                ui.label("Branches (B):       ");
+                let branches_response = ui.text_edit_singleline(&mut app.interleave_branches);
+                
+                if branches_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    if let Ok(result) = eval_expression(&app.interleave_branches) {
+                        app.interleave_branches = result.to_string();
+                    }
+                }
+            });
+            
+            ui.horizontal(|ui| {
+                ui.label("Delay Increment (M):");
+                let delay_response = ui.text_edit_singleline(&mut app.interleave_delay_increment);
+                
+                if delay_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    if let Ok(result) = eval_expression(&app.interleave_delay_increment) {
+                        app.interleave_delay_increment = result.to_string();
+                    }
+                }
+            });
+            
+            ui.add_space(8.0);
+            
+            // Visual preview
+            ui.group(|ui| {
+                ui.label("📊 Visual Preview:");
+                ui.add_space(4.0);
+                
+                if let (Ok(branches), Ok(delay_inc)) = (
+                    app.interleave_branches.parse::<usize>(),
+                    app.interleave_delay_increment.parse::<usize>()
+                ) {
+                    if branches > 0 && branches <= 16 && delay_inc > 0 && delay_inc <= 16 {
+                        ui.label(format!("Branches: {}, Delay Increment: {}", branches, delay_inc));
+                        ui.add_space(4.0);
+                        
+                        match app.interleave_direction {
+                            crate::processing::InterleaverDirection::Interleave => {
+                                ui.label("Round-robin distribution with delay:");
+                                ui.add_space(2.0);
+                                render_convolutional_preview(ui, branches, delay_inc);
+                            }
+                            crate::processing::InterleaverDirection::Deinterleave => {
+                                ui.label("Reverse round-robin with delay:");
+                                ui.add_space(2.0);
+                                render_convolutional_preview(ui, branches, delay_inc);
+                            }
+                        }
+                    } else {
+                        ui.label("⚠ Invalid parameters (max B=16, M=16)");
+                    }
+                } else {
+                    ui.label("⚠ Enter valid numbers for preview");
+                }
+            });
+            
+            ui.add_space(4.0);
+            ui.label("💡 Tips:");
+            ui.label("• Convolutional uses delay lines for each branch");
+            ui.label("• Branch i has delay = i × M symbols");
+            ui.label("• Distributes bits round-robin across branches");
+            ui.label("• Example: B=4, M=1 → delays [0,1,2,3]");
+            ui.label("• Provides time-diversity for burst errors");
+        }
+        
+        crate::processing::InterleaverType::Symbol => {
+            ui.label("🔤 Symbol Interleaver Parameters:");
+            ui.add_space(4.0);
+            
+            ui.horizontal(|ui| {
+                ui.label("Symbol Size (bits):");
+                let symbol_response = ui.text_edit_singleline(&mut app.interleave_symbol_size);
+                
+                if symbol_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    if let Ok(result) = eval_expression(&app.interleave_symbol_size) {
+                        app.interleave_symbol_size = result.to_string();
+                    }
+                }
+            });
+            
+            ui.horizontal(|ui| {
+                ui.label("Block Size (columns):");
+                let block_response = ui.text_edit_singleline(&mut app.interleave_block_size);
+                
+                if block_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    if let Ok(result) = eval_expression(&app.interleave_block_size) {
+                        app.interleave_block_size = result.to_string();
+                    }
+                }
+            });
+            
+            ui.horizontal(|ui| {
+                ui.label("Depth (rows):       ");
+                let depth_response = ui.text_edit_singleline(&mut app.interleave_depth);
+                
+                if depth_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    if let Ok(result) = eval_expression(&app.interleave_depth) {
+                        app.interleave_depth = result.to_string();
+                    }
+                }
+            });
+            
+            ui.add_space(8.0);
+            
+            ui.label("💡 Tips:");
+            ui.label("• Symbol interleaver treats multi-bit symbols as atomic units");
+            ui.label("• Common symbol sizes: 8 (bytes), 4 (nibbles), 16 (words)");
+            ui.label("• Use for AABBCCDD → ABCDABCD transformations");
+            ui.label("• Matrix: Write symbols row-wise, read column-wise");
+            ui.label("• Example: Symbol=8, Block=2, Depth=4 → AABBCCDD → ABCDABCD");
+        }
+    }
+    
+    ui.add_space(8.0);
+    
+    ui.horizontal(|ui| {
+        if ui.button("✓ Save").clicked() {
+            app.save_current_operation();
+        }
+        
+        if ui.button("✗ Cancel").clicked() {
+            app.cancel_operation_edit();
+        }
+    });
+}
+
+fn render_block_matrix_preview(ui: &mut egui::Ui, cols: usize, rows: usize) {
+    use egui::{Color32, Rect, Stroke};
+    
+    let cell_size = 24.0;
+    let spacing = 2.0;
+    let total_width = cols as f32 * (cell_size + spacing);
+    let total_height = rows as f32 * (cell_size + spacing);
+    
+    let (response, painter) = ui.allocate_painter(
+        egui::vec2(total_width, total_height),
+        egui::Sense::hover()
+    );
+    
+    let base_pos = response.rect.min;
+    
+    for row in 0..rows.min(8) {
+        for col in 0..cols.min(8) {
+            let x = base_pos.x + col as f32 * (cell_size + spacing);
+            let y = base_pos.y + row as f32 * (cell_size + spacing);
+            
+            let rect = Rect::from_min_size(
+                egui::pos2(x, y),
+                egui::vec2(cell_size, cell_size)
+            );
+            
+            let bit_index = row * cols + col;
+            let color = Color32::from_rgb(
+                (100 + bit_index * 15).min(255) as u8,
+                (150 - bit_index * 5).max(50) as u8,
+                200
+            );
+            
+            painter.rect_filled(rect, 2.0, color);
+            painter.rect_stroke(
+                rect,
+                2.0,
+                Stroke::new(1.0, Color32::from_gray(80)),
+                egui::epaint::StrokeKind::Outside
+            );
+            
+            let text = format!("{}", bit_index);
+            painter.text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                text,
+                egui::FontId::monospace(10.0),
+                Color32::WHITE
+            );
+        }
+    }
+    
+    if rows > 8 || cols > 8 {
+        ui.label("  (showing first 8×8)");
+    }
+}
+
+fn render_convolutional_preview(ui: &mut egui::Ui, branches: usize, delay_inc: usize) {
+    use egui::{Color32, Rect, Stroke};
+    
+    let branch_width = 80.0;
+    let branch_height = 30.0;
+    let spacing = 10.0;
+    
+    let total_width = branch_width + 150.0;
+    let total_height = branches.min(8) as f32 * (branch_height + spacing);
+    
+    let (response, painter) = ui.allocate_painter(
+        egui::vec2(total_width, total_height),
+        egui::Sense::hover()
+    );
+    
+    let base_pos = response.rect.min;
+    
+    for i in 0..branches.min(8) {
+        let y = base_pos.y + i as f32 * (branch_height + spacing);
+        let delay = i * delay_inc;
+        
+        // Draw branch box
+        let rect = Rect::from_min_size(
+            egui::pos2(base_pos.x, y),
+            egui::vec2(branch_width, branch_height)
+        );
+        
+        let color = Color32::from_rgb(
+            (100 + i * 20).min(255) as u8,
+            (150 - i * 10).max(50) as u8,
+            200
+        );
+        
+        painter.rect_filled(rect, 3.0, color);
+        painter.rect_stroke(
+            rect,
+            3.0,
+            Stroke::new(1.5, Color32::from_gray(80)),
+            egui::epaint::StrokeKind::Outside
+        );
+        
+        let text = format!("Branch {}", i);
+        painter.text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            text,
+            egui::FontId::proportional(11.0),
+            Color32::WHITE
+        );
+        
+        // Draw delay indicator
+        let delay_text = format!("Delay: {} symbols", delay);
+        painter.text(
+            egui::pos2(base_pos.x + branch_width + 15.0, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            delay_text,
+            egui::FontId::monospace(10.0),
+            ui.style().visuals.text_color()
+        );
+    }
+    
+    if branches > 8 {
+        ui.label("  (showing first 8 branches)");
+    }
+}
+

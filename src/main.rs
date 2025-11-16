@@ -233,6 +233,7 @@ fn render_left_panels(app: &mut BitApp, ctx: &egui::Context) {
                         OperationType::TakeSkipSequence,
                         OperationType::InvertBits,
                         OperationType::TruncateBits,
+                        OperationType::InterleaveBits,
                         OperationType::MultiWorksheetLoad,
                     ];
                     

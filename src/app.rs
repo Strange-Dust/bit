@@ -68,6 +68,19 @@ pub struct BitApp {
     pub truncate_start: String,
     pub truncate_end: String,
     
+    // Interleave Bits editor state
+    pub interleave_name: String,
+    pub interleave_type: crate::processing::InterleaverType,
+    pub interleave_direction: crate::processing::InterleaverDirection,
+    // Block interleaver params
+    pub interleave_block_size: String,
+    pub interleave_depth: String,
+    // Convolutional interleaver params
+    pub interleave_branches: String,
+    pub interleave_delay_increment: String,
+    // Symbol interleaver params
+    pub interleave_symbol_size: String,
+    
     // Multi-Worksheet Load editor state
     pub multiworksheet_name: String,
     pub multiworksheet_ops: Vec<(usize, String)>, // (worksheet_index, sequence_string)
@@ -163,6 +176,14 @@ impl Default for BitApp {
             truncate_name: String::new(),
             truncate_start: String::from("0"),
             truncate_end: String::new(),
+            interleave_name: String::new(),
+            interleave_type: crate::processing::InterleaverType::Block,
+            interleave_direction: crate::processing::InterleaverDirection::Interleave,
+            interleave_block_size: String::from("8"),
+            interleave_depth: String::from("4"),
+            interleave_branches: String::from("4"),
+            interleave_delay_increment: String::from("1"),
+            interleave_symbol_size: String::from("8"),
             multiworksheet_name: String::new(),
             multiworksheet_ops: Vec::new(),
             multiworksheet_input: String::new(),
@@ -777,6 +798,14 @@ impl BitApp {
         self.truncate_name.clear();
         self.truncate_start = String::from("0");
         self.truncate_end.clear();
+        self.interleave_name.clear();
+        self.interleave_type = crate::processing::InterleaverType::Block;
+        self.interleave_direction = crate::processing::InterleaverDirection::Interleave;
+        self.interleave_block_size = String::from("8");
+        self.interleave_depth = String::from("4");
+        self.interleave_branches = String::from("4");
+        self.interleave_delay_increment = String::from("1");
+        self.interleave_symbol_size = String::from("8");
         self.multiworksheet_name.clear();
         self.multiworksheet_ops.clear();
         self.multiworksheet_input.clear();
@@ -808,6 +837,37 @@ impl BitApp {
                     self.truncate_name = name.clone();
                     self.truncate_start = start.to_string();
                     self.truncate_end = end.to_string();
+                }
+                BitOperation::InterleaveBits { name, interleaver_type, block_config, convolutional_config, symbol_config } => {
+                    self.show_operation_menu = Some(OperationType::InterleaveBits);
+                    self.editing_operation_index = Some(index);
+                    self.interleave_name = name.clone();
+                    self.interleave_type = *interleaver_type;
+                    
+                    match interleaver_type {
+                        crate::processing::InterleaverType::Block => {
+                            if let Some(cfg) = block_config {
+                                self.interleave_direction = cfg.direction;
+                                self.interleave_block_size = cfg.block_size.to_string();
+                                self.interleave_depth = cfg.depth.to_string();
+                            }
+                        }
+                        crate::processing::InterleaverType::Convolutional => {
+                            if let Some(cfg) = convolutional_config {
+                                self.interleave_direction = cfg.direction;
+                                self.interleave_branches = cfg.branches.to_string();
+                                self.interleave_delay_increment = cfg.delay_increment.to_string();
+                            }
+                        }
+                        crate::processing::InterleaverType::Symbol => {
+                            if let Some(cfg) = symbol_config {
+                                self.interleave_direction = cfg.direction;
+                                self.interleave_symbol_size = cfg.symbol_size.to_string();
+                                self.interleave_block_size = cfg.block_size.to_string();
+                                self.interleave_depth = cfg.depth.to_string();
+                            }
+                        }
+                    }
                 }
                 BitOperation::MultiWorksheetLoad { name, worksheet_operations } => {
                     self.show_operation_menu = Some(OperationType::MultiWorksheetLoad);
@@ -906,6 +966,96 @@ impl BitApp {
                     
                     BitOperation::TruncateBits { name, start, end }
                 }
+                OperationType::InterleaveBits => {
+                    use crate::processing::{BlockInterleaverConfig, ConvolutionalInterleaverConfig, InterleaverType};
+                    use crate::processing::interleaver::SymbolInterleaverConfig;
+                    
+                    let name = if self.interleave_name.trim().is_empty() {
+                        match self.interleave_type {
+                            InterleaverType::Block => "Block Interleaver".to_string(),
+                            InterleaverType::Convolutional => "Convolutional Interleaver".to_string(),
+                            InterleaverType::Symbol => "Symbol Interleaver".to_string(),
+                        }
+                    } else {
+                        self.interleave_name.clone()
+                    };
+                    
+                    let (block_config, convolutional_config, symbol_config) = match self.interleave_type {
+                        InterleaverType::Block => {
+                            let block_size = match self.interleave_block_size.trim().parse::<usize>() {
+                                Ok(val) if val > 0 => val,
+                                _ => {
+                                    self.error_message = Some("Block size must be a positive number".to_string());
+                                    return;
+                                }
+                            };
+                            
+                            let depth = match self.interleave_depth.trim().parse::<usize>() {
+                                Ok(val) if val > 0 => val,
+                                _ => {
+                                    self.error_message = Some("Depth must be a positive number".to_string());
+                                    return;
+                                }
+                            };
+                            
+                            (Some(BlockInterleaverConfig::new(block_size, depth, self.interleave_direction)), None, None)
+                        }
+                        InterleaverType::Convolutional => {
+                            let branches = match self.interleave_branches.trim().parse::<usize>() {
+                                Ok(val) if val > 0 => val,
+                                _ => {
+                                    self.error_message = Some("Branches must be a positive number".to_string());
+                                    return;
+                                }
+                            };
+                            
+                            let delay_increment = match self.interleave_delay_increment.trim().parse::<usize>() {
+                                Ok(val) => val,
+                                _ => {
+                                    self.error_message = Some("Delay increment must be a valid number".to_string());
+                                    return;
+                                }
+                            };
+                            
+                            (None, Some(ConvolutionalInterleaverConfig::new(branches, delay_increment, self.interleave_direction)), None)
+                        }
+                        InterleaverType::Symbol => {
+                            let symbol_size = match self.interleave_symbol_size.trim().parse::<usize>() {
+                                Ok(val) if val > 0 => val,
+                                _ => {
+                                    self.error_message = Some("Symbol size must be a positive number".to_string());
+                                    return;
+                                }
+                            };
+                            
+                            let block_size = match self.interleave_block_size.trim().parse::<usize>() {
+                                Ok(val) if val > 0 => val,
+                                _ => {
+                                    self.error_message = Some("Block size must be a positive number".to_string());
+                                    return;
+                                }
+                            };
+                            
+                            let depth = match self.interleave_depth.trim().parse::<usize>() {
+                                Ok(val) if val > 0 => val,
+                                _ => {
+                                    self.error_message = Some("Depth must be a positive number".to_string());
+                                    return;
+                                }
+                            };
+                            
+                            (None, None, Some(SymbolInterleaverConfig::new(symbol_size, block_size, depth, self.interleave_direction)))
+                        }
+                    };
+                    
+                    BitOperation::InterleaveBits {
+                        name,
+                        interleaver_type: self.interleave_type,
+                        block_config,
+                        convolutional_config,
+                        symbol_config,
+                    }
+                }
                 OperationType::MultiWorksheetLoad => {
                     if self.multiworksheet_ops.is_empty() {
                         self.error_message = Some("Must add at least one worksheet operation".to_string());
@@ -980,6 +1130,14 @@ impl BitApp {
         self.truncate_name.clear();
         self.truncate_start = String::from("0");
         self.truncate_end.clear();
+        self.interleave_name.clear();
+        self.interleave_type = crate::processing::InterleaverType::Block;
+        self.interleave_direction = crate::processing::InterleaverDirection::Interleave;
+        self.interleave_block_size = String::from("8");
+        self.interleave_depth = String::from("4");
+        self.interleave_branches = String::from("4");
+        self.interleave_delay_increment = String::from("1");
+        self.interleave_symbol_size = String::from("8");
         self.multiworksheet_name.clear();
         self.multiworksheet_ops.clear();
         self.multiworksheet_input.clear();
