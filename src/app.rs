@@ -258,9 +258,11 @@ impl BitApp {
         
         // Check if we need async processing (large files in operations)
         let needs_async = self.operations.iter().any(|op| {
-            if let BitOperation::LoadFile { file_path, .. } = op {
-                if let Ok(metadata) = std::fs::metadata(file_path) {
-                    return metadata.len() > 10 * 1024 * 1024; // >10MB
+            if let BitOperation::LoadFile { file_path, enabled, .. } = op {
+                if *enabled {
+                    if let Ok(metadata) = std::fs::metadata(file_path) {
+                        return metadata.len() > 10 * 1024 * 1024; // >10MB
+                    }
                 }
             }
             false
@@ -273,15 +275,24 @@ impl BitApp {
         }
         
         // Otherwise use synchronous processing (fast)
-        // Check if we have a MultiWorksheetLoad or LoadFile operation
-        let has_multiworksheet = self.operations.iter().any(|op| matches!(op, BitOperation::MultiWorksheetLoad { .. }));
-        let has_loadfile = self.operations.iter().any(|op| matches!(op, BitOperation::LoadFile { .. }));
+        // Check if we have enabled MultiWorksheetLoad or LoadFile operations
+        let has_multiworksheet = self.operations.iter().any(|op| {
+            matches!(op, BitOperation::MultiWorksheetLoad { enabled: true, .. })
+        });
+        let has_loadfile = self.operations.iter().any(|op| {
+            matches!(op, BitOperation::LoadFile { enabled: true, .. })
+        });
         
         if has_multiworksheet || has_loadfile {
             // MultiWorksheetLoad or LoadFile creates new bits from scratch
             let mut result = BitVec::new();
             
             for op in &self.operations {
+                // Skip disabled operations
+                if !op.is_enabled() {
+                    continue;
+                }
+                
                 match op {
                     BitOperation::LoadFile { file_path, .. } => {
                         // Load bits from the file
@@ -484,8 +495,13 @@ impl BitApp {
                 let total_ops = operations.len();
                 
                 for (idx, op) in operations.iter().enumerate() {
+                    // Skip disabled operations
+                    if !op.is_enabled() {
+                        continue;
+                    }
+                    
                     match op {
-                        BitOperation::LoadFile { file_path, name } => {
+                        BitOperation::LoadFile { file_path, name, .. } => {
                             let _ = tx.send(OperationProgress::ProcessingOperation {
                                 index: idx + 1,
                                 total: total_ops,
@@ -814,31 +830,31 @@ impl BitApp {
     pub fn open_operation_editor(&mut self, index: usize) {
         if let Some(op) = self.operations.get(index) {
             match op {
-                BitOperation::LoadFile { name, file_path } => {
+                BitOperation::LoadFile { name, file_path, .. } => {
                     self.show_operation_menu = Some(OperationType::LoadFile);
                     self.editing_operation_index = Some(index);
                     self.loadfile_name = name.clone();
                     self.loadfile_path = Some(file_path.clone());
                 }
-                BitOperation::TakeSkipSequence { name, sequence } => {
+                BitOperation::TakeSkipSequence { name, sequence, .. } => {
                     self.show_operation_menu = Some(OperationType::TakeSkipSequence);
                     self.editing_operation_index = Some(index);
                     self.takeskip_name = name.clone();
                     self.takeskip_input = sequence.to_string();
                 }
-                BitOperation::InvertBits { name } => {
+                BitOperation::InvertBits { name, .. } => {
                     self.show_operation_menu = Some(OperationType::InvertBits);
                     self.editing_operation_index = Some(index);
                     self.invert_name = name.clone();
                 }
-                BitOperation::TruncateBits { name, start, end } => {
+                BitOperation::TruncateBits { name, start, end, .. } => {
                     self.show_operation_menu = Some(OperationType::TruncateBits);
                     self.editing_operation_index = Some(index);
                     self.truncate_name = name.clone();
                     self.truncate_start = start.to_string();
                     self.truncate_end = end.to_string();
                 }
-                BitOperation::InterleaveBits { name, interleaver_type, block_config, convolutional_config, symbol_config } => {
+                BitOperation::InterleaveBits { name, interleaver_type, block_config, convolutional_config, symbol_config, .. } => {
                     self.show_operation_menu = Some(OperationType::InterleaveBits);
                     self.editing_operation_index = Some(index);
                     self.interleave_name = name.clone();
@@ -869,7 +885,7 @@ impl BitApp {
                         }
                     }
                 }
-                BitOperation::MultiWorksheetLoad { name, worksheet_operations } => {
+                BitOperation::MultiWorksheetLoad { name, worksheet_operations, .. } => {
                     self.show_operation_menu = Some(OperationType::MultiWorksheetLoad);
                     self.editing_operation_index = Some(index);
                     self.multiworksheet_name = name.clone();
@@ -901,6 +917,7 @@ impl BitApp {
                     BitOperation::LoadFile {
                         name,
                         file_path,
+                        enabled: true,
                     }
                 }
                 OperationType::TakeSkipSequence => {
@@ -920,6 +937,7 @@ impl BitApp {
                             BitOperation::TakeSkipSequence {
                                 name,
                                 sequence: seq,
+                                enabled: true,
                             }
                         }
                         Err(e) => {
@@ -935,7 +953,7 @@ impl BitApp {
                         self.invert_name.clone()
                     };
                     
-                    BitOperation::InvertBits { name }
+                    BitOperation::InvertBits { name, enabled: true }
                 }
                 OperationType::TruncateBits => {
                     // Parse start and end
@@ -964,7 +982,7 @@ impl BitApp {
                         self.truncate_name.clone()
                     };
                     
-                    BitOperation::TruncateBits { name, start, end }
+                    BitOperation::TruncateBits { name, start, end, enabled: true }
                 }
                 OperationType::InterleaveBits => {
                     use crate::processing::{BlockInterleaverConfig, ConvolutionalInterleaverConfig, InterleaverType};
@@ -1054,6 +1072,7 @@ impl BitApp {
                         block_config,
                         convolutional_config,
                         symbol_config,
+                        enabled: true,
                     }
                 }
                 OperationType::MultiWorksheetLoad => {
@@ -1087,6 +1106,7 @@ impl BitApp {
                     BitOperation::MultiWorksheetLoad {
                         name,
                         worksheet_operations,
+                        enabled: true,
                     }
                 }
             };

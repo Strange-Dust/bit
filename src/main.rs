@@ -380,12 +380,14 @@ fn render_active_operations_section(app: &mut BitApp, ui: &mut egui::Ui) {
     ui.heading("Active Operations");
     ui.separator();
 
+    let mut to_remove: Option<usize> = None;
+    let mut to_edit: Option<usize> = None;
+    let mut toggled_operation: Option<usize> = None;
+
     egui::ScrollArea::vertical()
         .id_salt("active_ops")
         .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
         .show(ui, |ui| {
-            let mut to_remove = None;
-            let mut to_edit = None;
 
             if app.operations.is_empty() {
                 ui.centered_and_justified(|ui| {
@@ -396,13 +398,14 @@ fn render_active_operations_section(app: &mut BitApp, ui: &mut egui::Ui) {
                 
                 for (i, op) in app.operations.iter().enumerate() {
                     let is_being_dragged = app.dragging_operation == Some(i);
-                    let alpha = if is_being_dragged { 0.3 } else { 1.0 };
+                    let is_enabled = op.is_enabled();
+                    let alpha = if is_being_dragged { 0.3 } else if !is_enabled { 0.5 } else { 1.0 };
                     
                     let mut show_drop_indicator_above = false;
                     let mut show_drop_indicator_below = false;
                     
                     ui.scope(|ui| {
-                        if is_being_dragged {
+                        if is_being_dragged || !is_enabled {
                             ui.style_mut().visuals.widgets.inactive.bg_fill = 
                                 ui.style().visuals.widgets.inactive.bg_fill.linear_multiply(alpha);
                             ui.style_mut().visuals.widgets.noninteractive.bg_fill = 
@@ -416,9 +419,17 @@ fn render_active_operations_section(app: &mut BitApp, ui: &mut egui::Ui) {
                             ui.vertical(|ui| {
                                 ui.horizontal(|ui| {
                                     let drag_handle = ui.label("☰").interact(egui::Sense::click_and_drag());
+                                    
+                                    // Checkbox to enable/disable operation
+                                    let mut enabled = is_enabled;
+                                    if ui.checkbox(&mut enabled, "").changed() {
+                                        toggled_operation = Some(i);
+                                    }
+                                    
                                     ui.label(format!("{}.", i + 1));
                                     ui.vertical(|ui| {
-                                        ui.label(op.name());
+                                        let name_color = if is_enabled { ui.style().visuals.text_color() } else { ui.style().visuals.weak_text_color() };
+                                        ui.colored_label(name_color, op.name());
                                         ui.small(op.description());
                                     });
                                     
@@ -512,17 +523,25 @@ fn render_active_operations_section(app: &mut BitApp, ui: &mut egui::Ui) {
                     app.dragging_operation = None;
                 }
             }
-
-            if let Some(idx) = to_remove {
-                app.operations.remove(idx);
-                app.clear_pattern_matches(); // Operation removed, clear patterns
-                app.apply_operations();
-            }
-            
-            if let Some(idx) = to_edit {
-                app.open_operation_editor(idx);
-            }
         });
+
+    if let Some(idx) = to_remove {
+        app.operations.remove(idx);
+        app.clear_pattern_matches(); // Operation removed, clear patterns
+        app.apply_operations();
+    }
+    
+    if let Some(idx) = to_edit {
+        app.open_operation_editor(idx);
+    }
+    
+    if let Some(idx) = toggled_operation {
+        if let Some(op) = app.operations.get_mut(idx) {
+            let new_enabled = !op.is_enabled();
+            op.set_enabled(new_enabled);
+            app.apply_operations();
+        }
+    }
 
     if !app.operations.is_empty() {
         ui.separator();

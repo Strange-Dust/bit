@@ -33,22 +33,27 @@ pub enum BitOperation {
     LoadFile {
         name: String,
         file_path: PathBuf,
+        enabled: bool,
     },
     TakeSkipSequence {
         name: String,
         sequence: OperationSequence,
+        enabled: bool,
     },
     InvertBits {
         name: String,
+        enabled: bool,
     },
     MultiWorksheetLoad {
         name: String,
         worksheet_operations: Vec<WorksheetOperation>,
+        enabled: bool,
     },
     TruncateBits {
         name: String,
         start: usize,
         end: usize,
+        enabled: bool,
     },
     InterleaveBits {
         name: String,
@@ -56,6 +61,7 @@ pub enum BitOperation {
         block_config: Option<BlockInterleaverConfig>,
         convolutional_config: Option<ConvolutionalInterleaverConfig>,
         symbol_config: Option<SymbolInterleaverConfig>,
+        enabled: bool,
     },
     // Future operations:
     // FindPattern { name: String, pattern: String, highlight: bool },
@@ -75,10 +81,32 @@ impl BitOperation {
         match self {
             BitOperation::LoadFile { name, .. } => name,
             BitOperation::TakeSkipSequence { name, .. } => name,
-            BitOperation::InvertBits { name } => name,
+            BitOperation::InvertBits { name, .. } => name,
             BitOperation::MultiWorksheetLoad { name, .. } => name,
             BitOperation::TruncateBits { name, .. } => name,
             BitOperation::InterleaveBits { name, .. } => name,
+        }
+    }
+    
+    pub fn is_enabled(&self) -> bool {
+        match self {
+            BitOperation::LoadFile { enabled, .. } => *enabled,
+            BitOperation::TakeSkipSequence { enabled, .. } => *enabled,
+            BitOperation::InvertBits { enabled, .. } => *enabled,
+            BitOperation::MultiWorksheetLoad { enabled, .. } => *enabled,
+            BitOperation::TruncateBits { enabled, .. } => *enabled,
+            BitOperation::InterleaveBits { enabled, .. } => *enabled,
+        }
+    }
+    
+    pub fn set_enabled(&mut self, new_enabled: bool) {
+        match self {
+            BitOperation::LoadFile { enabled, .. } => *enabled = new_enabled,
+            BitOperation::TakeSkipSequence { enabled, .. } => *enabled = new_enabled,
+            BitOperation::InvertBits { enabled, .. } => *enabled = new_enabled,
+            BitOperation::MultiWorksheetLoad { enabled, .. } => *enabled = new_enabled,
+            BitOperation::TruncateBits { enabled, .. } => *enabled = new_enabled,
+            BitOperation::InterleaveBits { enabled, .. } => *enabled = new_enabled,
         }
     }
 
