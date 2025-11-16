@@ -9,6 +9,7 @@ pub enum PatternFormat {
 }
 
 impl PatternFormat {
+    #[allow(dead_code)]
     pub fn name(&self) -> &str {
         match self {
             PatternFormat::Hex => "Hex (0x...)",
@@ -127,6 +128,7 @@ impl Pattern {
     }
     
     /// Update the pattern bits after input changes
+    #[allow(dead_code)]
     pub fn update_bits(&mut self) -> Result<(), String> {
         self.bits = Self::parse_input(&self.input, self.format)?;
         Ok(())
@@ -180,6 +182,7 @@ impl Pattern {
 pub struct PatternMatch {
     pub position: usize,        // Bit position where pattern was found
     #[serde(skip)]
+    #[allow(dead_code)]
     pub actual_bits: BitVec<u8, Msb0>,  // The actual bits that matched
     pub delta: Option<usize>,   // Difference from previous match
     pub mismatches: usize,      // Number of bit differences (garbles used)
@@ -187,6 +190,7 @@ pub struct PatternMatch {
 
 impl PatternMatch {
     /// Get a formatted string of the matched bits
+    #[allow(dead_code)]
     pub fn bits_string(&self) -> String {
         self.actual_bits.iter()
             .map(|b| if *b { '1' } else { '0' })

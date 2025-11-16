@@ -370,7 +370,7 @@ mod pattern_search_tests {
             0,
         ).unwrap();
         
-        let mut haystack = bitvec![u8, Msb0; 1, 0, 1, 0];
+        let haystack = bitvec![u8, Msb0; 1, 0, 1, 0];
         pattern.search(&haystack);
         
         assert_eq!(pattern.matches.len(), 1);

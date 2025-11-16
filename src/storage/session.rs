@@ -60,6 +60,7 @@ impl AppSession {
         Ok(())
     }
     
+    #[allow(dead_code)]
     pub fn exists() -> bool {
         Self::session_file_path().exists()
     }

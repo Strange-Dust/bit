@@ -18,6 +18,7 @@ pub enum OperationProgress {
 }
 
 /// Message for view rendering progress
+#[allow(dead_code)]
 pub enum RenderProgress {
     Preparing { total_items: usize },
     Rendering { rendered: usize, total: usize, description: String },
@@ -100,8 +101,10 @@ pub struct BitApp {
     pub operation_progress: f32,
     
     // Rendering state
+    #[allow(dead_code)]
     pub is_rendering: bool,
     pub render_progress_message: String,
+    #[allow(dead_code)]
     pub render_progress: f32,
     pub defer_first_render: bool, // Defer first render to show "preparing" message
 }
@@ -316,10 +319,12 @@ impl BitApp {
         self.sync_to_worksheet();
     }
     
+    #[allow(dead_code)]
     pub fn clear_error(&mut self) {
         self.error_message = None;
     }
 
+    #[allow(dead_code)]
     pub fn set_error(&mut self, message: String) {
         self.error_message = Some(message);
     }

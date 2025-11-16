@@ -2,4 +2,4 @@
 
 pub mod pattern_locator;
 
-pub use pattern_locator::{Pattern, PatternFormat, PatternMatch};
+pub use pattern_locator::{Pattern, PatternFormat};

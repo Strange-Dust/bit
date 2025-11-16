@@ -51,6 +51,7 @@ impl BitViewer {
         self.highlighted_bits.clear();
     }
     
+    #[allow(dead_code)]
     pub fn add_highlight(&mut self, bit_index: usize) {
         self.highlighted_bits.insert(bit_index);
     }

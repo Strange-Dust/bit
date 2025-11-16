@@ -53,6 +53,7 @@ impl OperationType {
         }
     }
     
+    #[allow(dead_code)]
     pub fn all() -> &'static [OperationType] {
         &[
             OperationType::LoadFile,

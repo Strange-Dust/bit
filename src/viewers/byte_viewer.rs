@@ -85,6 +85,7 @@ impl ByteViewer {
         }
     }
 
+    #[allow(dead_code)]
     pub fn update_column(&mut self, index: usize, column: ByteColumn) {
         if index < self.config.columns.len() {
             self.config.columns[index] = column;
@@ -92,6 +93,7 @@ impl ByteViewer {
     }
 
     /// Convert bits to bytes for display
+    #[allow(dead_code)]
     fn bits_to_bytes(bits: &BitVec<u8, Msb0>) -> Vec<u8> {
         let mut bytes = Vec::new();
         for chunk in bits.chunks(8) {
@@ -107,6 +109,7 @@ impl ByteViewer {
     }
 
     /// Render the byte view with virtualization for large files
+    #[allow(dead_code)]
     pub fn render(&mut self, ui: &mut egui::Ui, bits: &BitVec<u8, Msb0>) {
         self.render_with_patterns(ui, bits, &[]);
     }
@@ -372,10 +375,12 @@ impl ByteViewer {
         None
     }
 
+    #[allow(dead_code)]
     pub fn get_config(&self) -> &ByteViewConfig {
         &self.config
     }
 
+    #[allow(dead_code)]
     pub fn set_config(&mut self, config: ByteViewConfig) {
         self.config = config;
     }
