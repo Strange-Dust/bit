@@ -44,6 +44,11 @@ pub enum BitOperation {
         name: String,
         worksheet_operations: Vec<WorksheetOperation>,
     },
+    TruncateBits {
+        name: String,
+        start: usize,
+        end: usize,
+    },
     // Future operations:
     // FindPattern { name: String, pattern: String, highlight: bool },
     // Replace { name: String, from_pattern: String, to_pattern: String },
@@ -64,6 +69,7 @@ impl BitOperation {
             BitOperation::TakeSkipSequence { name, .. } => name,
             BitOperation::InvertBits { name } => name,
             BitOperation::MultiWorksheetLoad { name, .. } => name,
+            BitOperation::TruncateBits { name, .. } => name,
         }
     }
 
@@ -76,6 +82,9 @@ impl BitOperation {
             BitOperation::InvertBits { .. } => "Inverts all bits".to_string(),
             BitOperation::MultiWorksheetLoad { worksheet_operations, .. } => {
                 format!("Load from {} worksheet(s)", worksheet_operations.len())
+            }
+            BitOperation::TruncateBits { start, end, .. } => {
+                format!("Keep bits {}-{}", start, end)
             }
         }
     }
@@ -97,6 +106,17 @@ impl BitOperation {
                 // This operation type requires worksheet data, so it should be handled
                 // differently in the main application. For now, return empty.
                 BitVec::new()
+            }
+            BitOperation::TruncateBits { start, end, .. } => {
+                let len = input.len();
+                let actual_start = (*start).min(len);
+                let actual_end = (*end).min(len);
+                
+                if actual_start >= actual_end {
+                    return BitVec::new();
+                }
+                
+                input[actual_start..actual_end].to_bitvec()
             }
         }
     }

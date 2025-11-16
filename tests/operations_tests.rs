@@ -325,6 +325,104 @@ mod bit_operation_tests {
         };
         assert!(op.description().contains("test.bin"));
     }
+
+    #[test]
+    fn test_truncate_bits_basic() {
+        let input = bitvec![u8, Msb0; 1, 0, 1, 0, 1, 1, 0, 0, 1, 1];
+        let op = BitOperation::TruncateBits {
+            name: "test".to_string(),
+            start: 0,
+            end: 5,
+        };
+        let result = op.apply(&input);
+        assert_eq!(result, bitvec![u8, Msb0; 1, 0, 1, 0, 1]);
+    }
+
+    #[test]
+    fn test_truncate_bits_middle_range() {
+        let input = bitvec![u8, Msb0; 1, 0, 1, 0, 1, 1, 0, 0, 1, 1];
+        let op = BitOperation::TruncateBits {
+            name: "test".to_string(),
+            start: 3,
+            end: 7,
+        };
+        let result = op.apply(&input);
+        // Bits 3-6 (indices 3,4,5,6)
+        assert_eq!(result, bitvec![u8, Msb0; 0, 1, 1, 0]);
+    }
+
+    #[test]
+    fn test_truncate_bits_to_end() {
+        let input = bitvec![u8, Msb0; 1, 0, 1, 0, 1, 1, 0, 0, 1, 1];
+        let op = BitOperation::TruncateBits {
+            name: "test".to_string(),
+            start: 5,
+            end: usize::MAX,
+        };
+        let result = op.apply(&input);
+        // From index 5 to end
+        assert_eq!(result, bitvec![u8, Msb0; 1, 0, 0, 1, 1]);
+    }
+
+    #[test]
+    fn test_truncate_bits_beyond_length() {
+        let input = bitvec![u8, Msb0; 1, 0, 1, 0];
+        let op = BitOperation::TruncateBits {
+            name: "test".to_string(),
+            start: 0,
+            end: 100,
+        };
+        let result = op.apply(&input);
+        // Should clamp to actual length
+        assert_eq!(result, input);
+    }
+
+    #[test]
+    fn test_truncate_bits_start_beyond_length() {
+        let input = bitvec![u8, Msb0; 1, 0, 1, 0];
+        let op = BitOperation::TruncateBits {
+            name: "test".to_string(),
+            start: 10,
+            end: 20,
+        };
+        let result = op.apply(&input);
+        // start >= end after clamping, should return empty
+        assert_eq!(result.len(), 0);
+    }
+
+    #[test]
+    fn test_truncate_bits_start_equals_end() {
+        let input = bitvec![u8, Msb0; 1, 0, 1, 0];
+        let op = BitOperation::TruncateBits {
+            name: "test".to_string(),
+            start: 2,
+            end: 2,
+        };
+        let result = op.apply(&input);
+        assert_eq!(result.len(), 0);
+    }
+
+    #[test]
+    fn test_truncate_bits_single_bit() {
+        let input = bitvec![u8, Msb0; 1, 0, 1, 0, 1];
+        let op = BitOperation::TruncateBits {
+            name: "test".to_string(),
+            start: 2,
+            end: 3,
+        };
+        let result = op.apply(&input);
+        assert_eq!(result, bitvec![u8, Msb0; 1]);
+    }
+
+    #[test]
+    fn test_truncate_bits_description() {
+        let op = BitOperation::TruncateBits {
+            name: "test".to_string(),
+            start: 100,
+            end: 250,
+        };
+        assert_eq!(op.description(), "Keep bits 100-250");
+    }
 }
 
 #[cfg(test)]

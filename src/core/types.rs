@@ -23,6 +23,7 @@ pub enum OperationType {
     TakeSkipSequence,
     InvertBits,
     MultiWorksheetLoad,
+    TruncateBits,
 }
 
 impl OperationType {
@@ -32,6 +33,7 @@ impl OperationType {
             OperationType::TakeSkipSequence => "Take/Skip Sequence",
             OperationType::InvertBits => "Invert Bits",
             OperationType::MultiWorksheetLoad => "Multi-Worksheet Load",
+            OperationType::TruncateBits => "Truncate Bits",
         }
     }
 
@@ -41,6 +43,7 @@ impl OperationType {
             OperationType::TakeSkipSequence => "📝",
             OperationType::InvertBits => "🔄",
             OperationType::MultiWorksheetLoad => "📚",
+            OperationType::TruncateBits => "✂️",
         }
     }
 
@@ -50,6 +53,7 @@ impl OperationType {
             OperationType::TakeSkipSequence => "Pattern-based bit extraction (t4r3i8s1)",
             OperationType::InvertBits => "Invert all bits (0→1, 1→0)",
             OperationType::MultiWorksheetLoad => "Load bits from multiple worksheets with operations",
+            OperationType::TruncateBits => "Keep bits in a range and discard the rest",
         }
     }
     
@@ -60,6 +64,7 @@ impl OperationType {
             OperationType::TakeSkipSequence,
             OperationType::InvertBits,
             OperationType::MultiWorksheetLoad,
+            OperationType::TruncateBits,
         ]
     }
 }

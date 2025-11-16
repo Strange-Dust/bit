@@ -5,6 +5,7 @@ pub mod core;
 pub mod processing;
 pub mod storage;
 pub mod ui;
+pub mod utils;
 pub mod viewers;
 
 // Re-export commonly used items for convenience

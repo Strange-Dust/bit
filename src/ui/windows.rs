@@ -3,6 +3,7 @@
 use crate::analysis::{Pattern, PatternFormat};
 use crate::app::BitApp;
 use crate::core::OperationType;
+use crate::utils::eval_expression;
 use eframe::egui;
 
 pub fn render_pattern_locator_window(app: &mut BitApp, ctx: &egui::Context) {
@@ -197,6 +198,7 @@ pub fn render_operation_windows(app: &mut BitApp, ctx: &egui::Context) {
                     OperationType::TakeSkipSequence => render_takeskip_editor(app, ui),
                     OperationType::InvertBits => render_invert_editor(app, ui),
                     OperationType::MultiWorksheetLoad => render_multiworksheet_editor(app, ui),
+                    OperationType::TruncateBits => render_truncate_editor(app, ui),
                 }
             });
         
@@ -299,6 +301,67 @@ fn render_invert_editor(app: &mut BitApp, ui: &mut egui::Ui) {
     ui.label("This operation will invert all bits:");
     ui.label("• 0 → 1");
     ui.label("• 1 → 0");
+    
+    ui.add_space(8.0);
+    
+    ui.horizontal(|ui| {
+        if ui.button("✓ Save").clicked() {
+            app.save_current_operation();
+        }
+        
+        if ui.button("✗ Cancel").clicked() {
+            app.cancel_operation_edit();
+        }
+    });
+}
+
+fn render_truncate_editor(app: &mut BitApp, ui: &mut egui::Ui) {
+    ui.heading("Truncate Bits");
+    ui.separator();
+    
+    ui.horizontal(|ui| {
+        ui.label("Name:");
+        ui.text_edit_singleline(&mut app.truncate_name);
+    });
+    
+    ui.add_space(8.0);
+    
+    ui.label("Specify the range of bits to keep:");
+    ui.add_space(4.0);
+    
+    ui.horizontal(|ui| {
+        ui.label("Start (inclusive):");
+        let start_response = ui.text_edit_singleline(&mut app.truncate_start);
+        
+        // Evaluate math expression on Enter key
+        if start_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+            if let Ok(result) = eval_expression(&app.truncate_start) {
+                app.truncate_start = result.to_string();
+            }
+        }
+    });
+    
+    ui.horizontal(|ui| {
+        ui.label("End (exclusive):  ");
+        let end_response = ui.text_edit_singleline(&mut app.truncate_end);
+        
+        // Evaluate math expression on Enter key
+        if end_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+            if !app.truncate_end.is_empty() {
+                if let Ok(result) = eval_expression(&app.truncate_end) {
+                    app.truncate_end = result.to_string();
+                }
+            }
+        }
+    });
+    
+    ui.add_space(4.0);
+    ui.label("💡 Tips:");
+    ui.label("• Leave end empty to keep until the end");
+    ui.label("• You can use math: 8*8, 100+50, 200-10, 64/2");
+    ui.label("• Example: Start=0, End=250 keeps bits 0-249");
+    ui.label("• Example: Start=100, End=250 keeps bits 100-249");
+    ui.label("• Example: Start=0, End=empty keeps all bits from 0");
     
     ui.add_space(8.0);
     

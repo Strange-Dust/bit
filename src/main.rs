@@ -4,6 +4,7 @@ mod core;
 mod processing;
 mod storage;
 mod ui;
+mod utils;
 mod viewers;
 
 use crate::app::BitApp;
@@ -231,14 +232,44 @@ fn render_left_panels(app: &mut BitApp, ctx: &egui::Context) {
                         OperationType::LoadFile,
                         OperationType::TakeSkipSequence,
                         OperationType::InvertBits,
+                        OperationType::TruncateBits,
                         OperationType::MultiWorksheetLoad,
                     ];
                     
                     for &op_type in &operations {
-                        if ui.button(format!("{} {}", op_type.icon(), op_type.name()))
-                            .on_hover_text(op_type.description())
-                            .clicked() 
-                        {
+                        let available_width = ui.available_width();
+                        let (rect, response) = ui.allocate_exact_size(
+                            egui::vec2(available_width, ui.spacing().interact_size.y),
+                            egui::Sense::click()
+                        );
+                        
+                        if ui.is_rect_visible(rect) {
+                            let visuals = ui.style().interact(&response);
+                            ui.painter().rect_filled(
+                                rect,
+                                3.0,
+                                visuals.bg_fill,
+                            );
+                            if visuals.bg_stroke.width > 0.0 {
+                                ui.painter().rect_stroke(
+                                    rect,
+                                    3.0,
+                                    visuals.bg_stroke,
+                                    egui::epaint::StrokeKind::Outside
+                                );
+                            }
+                            
+                            let text_pos = rect.left_center() + egui::vec2(8.0, 0.0);
+                            ui.painter().text(
+                                text_pos,
+                                egui::Align2::LEFT_CENTER,
+                                format!("{} {}", op_type.icon(), op_type.name()),
+                                egui::FontId::default(),
+                                visuals.text_color(),
+                            );
+                        }
+                        
+                        if response.on_hover_text(op_type.description()).clicked() {
                             app.open_operation_creator(op_type);
                         }
                         ui.add_space(4.0);

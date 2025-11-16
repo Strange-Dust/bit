@@ -63,6 +63,11 @@ pub struct BitApp {
     // Invert Bits editor state
     pub invert_name: String,
     
+    // Truncate Bits editor state
+    pub truncate_name: String,
+    pub truncate_start: String,
+    pub truncate_end: String,
+    
     // Multi-Worksheet Load editor state
     pub multiworksheet_name: String,
     pub multiworksheet_ops: Vec<(usize, String)>, // (worksheet_index, sequence_string)
@@ -155,6 +160,9 @@ impl Default for BitApp {
             loadfile_name: String::new(),
             loadfile_path: None,
             invert_name: String::new(),
+            truncate_name: String::new(),
+            truncate_start: String::from("0"),
+            truncate_end: String::new(),
             multiworksheet_name: String::new(),
             multiworksheet_ops: Vec::new(),
             multiworksheet_input: String::new(),
@@ -766,6 +774,9 @@ impl BitApp {
         self.loadfile_name.clear();
         self.loadfile_path = None;
         self.invert_name.clear();
+        self.truncate_name.clear();
+        self.truncate_start = String::from("0");
+        self.truncate_end.clear();
         self.multiworksheet_name.clear();
         self.multiworksheet_ops.clear();
         self.multiworksheet_input.clear();
@@ -790,6 +801,13 @@ impl BitApp {
                     self.show_operation_menu = Some(OperationType::InvertBits);
                     self.editing_operation_index = Some(index);
                     self.invert_name = name.clone();
+                }
+                BitOperation::TruncateBits { name, start, end } => {
+                    self.show_operation_menu = Some(OperationType::TruncateBits);
+                    self.editing_operation_index = Some(index);
+                    self.truncate_name = name.clone();
+                    self.truncate_start = start.to_string();
+                    self.truncate_end = end.to_string();
                 }
                 BitOperation::MultiWorksheetLoad { name, worksheet_operations } => {
                     self.show_operation_menu = Some(OperationType::MultiWorksheetLoad);
@@ -859,6 +877,35 @@ impl BitApp {
                     
                     BitOperation::InvertBits { name }
                 }
+                OperationType::TruncateBits => {
+                    // Parse start and end
+                    let start = self.truncate_start.trim().parse::<usize>().unwrap_or(0);
+                    let end = if self.truncate_end.trim().is_empty() {
+                        // If no end specified, use a very large number (essentially to the end)
+                        usize::MAX
+                    } else {
+                        match self.truncate_end.trim().parse::<usize>() {
+                            Ok(val) => val,
+                            Err(_) => {
+                                self.error_message = Some("Invalid end value".to_string());
+                                return;
+                            }
+                        }
+                    };
+                    
+                    if start >= end {
+                        self.error_message = Some("Start must be less than end".to_string());
+                        return;
+                    }
+                    
+                    let name = if self.truncate_name.trim().is_empty() {
+                        format!("Truncate: {}-{}", start, if end == usize::MAX { "end".to_string() } else { end.to_string() })
+                    } else {
+                        self.truncate_name.clone()
+                    };
+                    
+                    BitOperation::TruncateBits { name, start, end }
+                }
                 OperationType::MultiWorksheetLoad => {
                     if self.multiworksheet_ops.is_empty() {
                         self.error_message = Some("Must add at least one worksheet operation".to_string());
@@ -911,6 +958,9 @@ impl BitApp {
             self.loadfile_name.clear();
             self.loadfile_path = None;
             self.invert_name.clear();
+            self.truncate_name.clear();
+            self.truncate_start = String::from("0");
+            self.truncate_end.clear();
             self.multiworksheet_name.clear();
             self.multiworksheet_ops.clear();
             self.multiworksheet_input.clear();
@@ -927,6 +977,9 @@ impl BitApp {
         self.loadfile_name.clear();
         self.loadfile_path = None;
         self.invert_name.clear();
+        self.truncate_name.clear();
+        self.truncate_start = String::from("0");
+        self.truncate_end.clear();
         self.multiworksheet_name.clear();
         self.multiworksheet_ops.clear();
         self.multiworksheet_input.clear();
