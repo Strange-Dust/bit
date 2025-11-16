@@ -7,6 +7,7 @@ use std::collections::HashSet;
 pub enum BitShape {
     Square,
     Circle,
+    Octagon,
 }
 
 pub struct BitViewer {
@@ -30,7 +31,7 @@ impl BitViewer {
             bits: BitVec::new(),
             frame_length: 64,
             bit_size: 10.0,
-            bit_spacing: 2.0,
+            bit_spacing: 0.0,
             shape: BitShape::Square,
             show_grid: true,
             thick_grid_interval_horizontal: 8,
@@ -96,8 +97,7 @@ impl BitViewer {
 
         let mut scroll_area = egui::ScrollArea::both()
             .auto_shrink([false, false])
-            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
-            .drag_to_scroll(true);
+            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible);
         
         // Handle jump to bit position
         if let Some(bit_pos) = self.jump_to_bit.take() {
@@ -285,6 +285,49 @@ impl BitViewer {
                                         self.bit_size / 2.0,
                                         Stroke::new(1.0, Color32::GRAY),
                                     );
+                                }
+                            }
+                            BitShape::Octagon => {
+                                let center = Pos2::new(
+                                    x + self.bit_size / 2.0,
+                                    y + self.bit_size / 2.0,
+                                );
+                                let radius = self.bit_size / 2.0;
+                                
+                                // Calculate octagon vertices (8 points)
+                                let angle_offset = std::f32::consts::PI / 8.0; // Start at 22.5 degrees for flat top/bottom
+                                let mut points = Vec::new();
+                                for i in 0..8 {
+                                    let angle = angle_offset + (i as f32) * std::f32::consts::PI / 4.0;
+                                    points.push(Pos2::new(
+                                        center.x + radius * angle.cos(),
+                                        center.y + radius * angle.sin(),
+                                    ));
+                                }
+                                
+                                // Draw filled octagon
+                                painter.add(egui::Shape::convex_polygon(
+                                    points.clone(),
+                                    color,
+                                    Stroke::NONE,
+                                ));
+                                
+                                // Draw highlight overlay if this bit is highlighted
+                                if self.highlighted_bits.contains(&bit_index) {
+                                    painter.add(egui::Shape::convex_polygon(
+                                        points.clone(),
+                                        Color32::from_rgba_unmultiplied(255, 255, 0, 150),
+                                        Stroke::NONE,
+                                    ));
+                                }
+                                
+                                if self.show_grid {
+                                    // Draw octagon outline
+                                    painter.add(egui::Shape::convex_polygon(
+                                        points,
+                                        Color32::TRANSPARENT,
+                                        Stroke::new(1.0, Color32::GRAY),
+                                    ));
                                 }
                             }
                         }

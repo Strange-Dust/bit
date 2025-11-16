@@ -1,0 +1,33 @@
+{
+  "name": "Worksheet 3",
+  "file_path": "D:\\dev\\bit\\auto-framework\\bit\\test_files\\UnityPlayer.dll",
+  "operations": [
+    {
+      "MultiWorksheetLoad": {
+        "name": "Load from 2 worksheets",
+        "worksheet_operations": [
+          {
+            "worksheet_index": 0,
+            "sequence": {
+              "operations": [
+                {
+                  "Take": 1
+                }
+              ]
+            }
+          },
+          {
+            "worksheet_index": 1,
+            "sequence": {
+              "operations": [
+                {
+                  "Take": 1
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

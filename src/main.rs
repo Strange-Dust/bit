@@ -1,4 +1,5 @@
 mod bit_viewer;
+mod byte_viewer;
 mod file_io;
 mod operations;
 mod pattern_locator;
@@ -7,6 +8,7 @@ mod settings;
 mod worksheet;
 
 use bit_viewer::{BitShape, BitViewer};
+use byte_viewer::ByteViewer;
 use bitvec::prelude::*;
 use eframe::egui;
 use file_io::{read_file_as_bits, write_bits_to_file};
@@ -32,9 +34,18 @@ fn main() -> Result<(), eframe::Error> {
     )
 }
 
+// View mode for switching between bit and byte views
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ViewMode {
+    Bit,
+    Byte,
+    Ascii,
+}
+
 // Available operation types that can be added
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum OperationType {
+    LoadFile,
     TakeSkipSequence,
     InvertBits,
     MultiWorksheetLoad,
@@ -47,6 +58,7 @@ enum OperationType {
 impl OperationType {
     fn name(&self) -> &str {
         match self {
+            OperationType::LoadFile => "Load File",
             OperationType::TakeSkipSequence => "Take/Skip Sequence",
             OperationType::InvertBits => "Invert Bits",
             OperationType::MultiWorksheetLoad => "Multi-Worksheet Load",
@@ -55,6 +67,7 @@ impl OperationType {
 
     fn icon(&self) -> &str {
         match self {
+            OperationType::LoadFile => "📂",
             OperationType::TakeSkipSequence => "📝",
             OperationType::InvertBits => "🔄",
             OperationType::MultiWorksheetLoad => "📚",
@@ -63,6 +76,7 @@ impl OperationType {
 
     fn description(&self) -> &str {
         match self {
+            OperationType::LoadFile => "Load bits from a file",
             OperationType::TakeSkipSequence => "Pattern-based bit extraction (t4r3i8s1)",
             OperationType::InvertBits => "Invert all bits (0→1, 1→0)",
             OperationType::MultiWorksheetLoad => "Load bits from multiple worksheets with operations",
@@ -74,6 +88,8 @@ struct BitApp {
     original_bits: BitVec<u8, Msb0>,
     processed_bits: BitVec<u8, Msb0>,
     viewer: BitViewer,
+    byte_viewer: ByteViewer,
+    view_mode: ViewMode,
     operations: Vec<BitOperation>,
     current_file_path: Option<PathBuf>,
     error_message: Option<String>,
@@ -99,6 +115,10 @@ struct BitApp {
     takeskip_name: String,
     takeskip_input: String,
     
+    // Load File editor state
+    loadfile_name: String,
+    loadfile_path: Option<PathBuf>,
+    
     // Invert Bits editor state
     invert_name: String,
     
@@ -120,6 +140,13 @@ struct BitApp {
     // Session restore state
     show_restore_dialog: bool,
     pending_session: Option<AppSession>,
+    
+    // Byte view column editor state
+    show_column_editor: bool,
+    column_editor_label: String,
+    column_editor_bit_start: String,
+    column_editor_bit_end: String,
+    column_editor_color: [u8; 3],
 }
 
 impl Default for BitApp {
@@ -147,6 +174,8 @@ impl Default for BitApp {
             original_bits: BitVec::new(),
             processed_bits: BitVec::new(),
             viewer,
+            byte_viewer: ByteViewer::new(),
+            view_mode: ViewMode::Bit,
             operations: Vec::new(),
             current_file_path: None,
             error_message: None,
@@ -163,6 +192,8 @@ impl Default for BitApp {
             dragging_operation: None,
             takeskip_name: String::new(),
             takeskip_input: String::new(),
+            loadfile_name: String::new(),
+            loadfile_path: None,
             invert_name: String::new(),
             multiworksheet_name: String::new(),
             multiworksheet_ops: Vec::new(),
@@ -177,6 +208,11 @@ impl Default for BitApp {
             selected_pattern: None,
             show_restore_dialog,
             pending_session,
+            show_column_editor: false,
+            column_editor_label: String::new(),
+            column_editor_bit_start: String::from("0"),
+            column_editor_bit_end: String::from("7"),
+            column_editor_color: [100, 150, 200],
         }
     }
 }
@@ -285,23 +321,24 @@ impl BitApp {
         }
     }
     
-    fn load_file(&mut self) {
-        if let Some(path) = rfd::FileDialog::new().pick_file() {
-            match read_file_as_bits(&path) {
-                Ok(bits) => {
-                    self.original_bits = bits.clone();
-                    self.processed_bits = bits;
-                    self.current_file_path = Some(path);
-                    self.error_message = None;
-                    self.update_viewer();
-                    self.sync_to_worksheet();
-                }
-                Err(e) => {
-                    self.error_message = Some(format!("Failed to load file: {}", e));
-                }
-            }
-        }
-    }
+    // Deprecated: Use LoadFile operation instead
+    // fn load_file(&mut self) {
+    //     if let Some(path) = rfd::FileDialog::new().pick_file() {
+    //         match read_file_as_bits(&path) {
+    //             Ok(bits) => {
+    //                 self.original_bits = bits.clone();
+    //                 self.processed_bits = bits;
+    //                 self.current_file_path = Some(path);
+    //                 self.error_message = None;
+    //                 self.update_viewer();
+    //                 self.sync_to_worksheet();
+    //             }
+    //             Err(e) => {
+    //                 self.error_message = Some(format!("Failed to load file: {}", e));
+    //             }
+    //         }
+    //     }
+    // }
 
     fn save_file(&mut self) {
         if let Some(path) = rfd::FileDialog::new().save_file() {
@@ -323,15 +360,28 @@ impl BitApp {
     }
 
     fn apply_operations(&mut self) {
-        // Check if we have a MultiWorksheetLoad operation
+        // Check if we have a MultiWorksheetLoad or LoadFile operation
         let has_multiworksheet = self.operations.iter().any(|op| matches!(op, BitOperation::MultiWorksheetLoad { .. }));
+        let has_loadfile = self.operations.iter().any(|op| matches!(op, BitOperation::LoadFile { .. }));
         
-        if has_multiworksheet {
-            // MultiWorksheetLoad creates new bits from other worksheets
+        if has_multiworksheet || has_loadfile {
+            // MultiWorksheetLoad or LoadFile creates new bits from scratch
             let mut result = BitVec::new();
             
             for op in &self.operations {
                 match op {
+                    BitOperation::LoadFile { file_path, .. } => {
+                        // Load bits from the file
+                        match read_file_as_bits(file_path) {
+                            Ok(bits) => {
+                                result.extend(bits);
+                            }
+                            Err(e) => {
+                                self.error_message = Some(format!("Failed to load file: {}", e));
+                                continue; // Skip if file can't be loaded
+                            }
+                        }
+                    }
                     BitOperation::MultiWorksheetLoad { worksheet_operations, .. } => {
                         // Process each worksheet operation
                         for wo in worksheet_operations {
@@ -363,7 +413,7 @@ impl BitApp {
             }
             
             self.processed_bits = result;
-            // When using MultiWorksheetLoad, automatically switch to viewing processed bits
+            // When using MultiWorksheetLoad or LoadFile, automatically switch to viewing processed bits
             self.show_original = false;
         } else {
             // Normal operation: start with original bits and apply operations
@@ -385,12 +435,128 @@ impl BitApp {
     }
 
     fn update_viewer(&mut self) {
+        // Only update the bit viewer if we're in bit view mode
+        // This prevents freezing when in Byte or ASCII view with large files
+        if self.view_mode != ViewMode::Bit {
+            return;
+        }
+        
         let bits_to_show = if self.show_original {
             &self.original_bits
         } else {
             &self.processed_bits
         };
+        
         self.viewer.set_bits(bits_to_show.clone());
+    }
+
+    fn render_ascii_view(&self, ui: &mut egui::Ui, bits: &BitVec<u8, Msb0>) {
+        if bits.is_empty() {
+            ui.label("No data to display");
+            return;
+        }
+
+        // Limit rendering to prevent freezing with large files
+        // Max 1 million bits (125KB) to keep UI responsive
+        const MAX_BITS_TO_RENDER: usize = 1_000_000;
+        
+        let bits_to_render = if bits.len() > MAX_BITS_TO_RENDER {
+            ui.colored_label(
+                egui::Color32::from_rgb(255, 200, 0),
+                format!("⚠ Large file detected ({:.2} MB). Showing first {} KB only.", 
+                    bits.len() as f64 / 8.0 / 1024.0 / 1024.0,
+                    MAX_BITS_TO_RENDER / 8 / 1024)
+            );
+            ui.label("Tip: Use Byte view for better performance with large files");
+            ui.separator();
+            &bits[..MAX_BITS_TO_RENDER]
+        } else {
+            bits
+        };
+
+        // Convert bits to bytes
+        let mut bytes = Vec::new();
+        for chunk in bits_to_render.chunks(8) {
+            let mut byte = 0u8;
+            for (i, bit) in chunk.iter().enumerate() {
+                if *bit {
+                    byte |= 1 << (7 - i);
+                }
+            }
+            bytes.push(byte);
+        }
+
+        // Use frame_length (in bits) to determine characters per row
+        // Each character represents 8 bits (1 byte)
+        let chars_per_row = self.viewer.frame_length / 8;
+        let char_width = 12.0;
+        let char_height = 20.0;
+        
+        egui::ScrollArea::vertical()
+            .show(ui, |ui| {
+                egui::ScrollArea::horizontal()
+                    .show(ui, |ui| {
+                        let total_rows = (bytes.len() + chars_per_row - 1) / chars_per_row;
+                        
+                        for row in 0..total_rows {
+                            ui.horizontal(|ui| {
+                                // Show offset if enabled
+                                if self.byte_viewer.config.show_hex_offset {
+                                    let offset = row * chars_per_row;
+                                    ui.label(
+                                        egui::RichText::new(format!("{:08X}  ", offset))
+                                            .monospace()
+                                            .color(egui::Color32::GRAY)
+                                    );
+                                }
+                                
+                                // Draw ASCII characters
+                                let row_start = row * chars_per_row;
+                                let row_end = (row_start + chars_per_row).min(bytes.len());
+                                
+                                for byte_idx in row_start..row_end {
+                                    let byte = bytes[byte_idx];
+                                    let ch = if byte >= 32 && byte <= 126 {
+                                        byte as char
+                                    } else {
+                                        '.'
+                                    };
+                                    
+                                    let (rect, response) = ui.allocate_exact_size(
+                                        egui::Vec2::new(char_width, char_height),
+                                        egui::Sense::hover(),
+                                    );
+                                    
+                                    // Choose color based on character type
+                                    let text_color = if byte >= 32 && byte <= 126 {
+                                        egui::Color32::BLACK
+                                    } else {
+                                        egui::Color32::DARK_GRAY
+                                    };
+                                    
+                                    // Draw character
+                                    ui.painter().text(
+                                        rect.center(),
+                                        egui::Align2::CENTER_CENTER,
+                                        ch,
+                                        egui::FontId::monospace(16.0),
+                                        text_color
+                                    );
+                                    
+                                    // Show tooltip
+                                    if response.hovered() {
+                                        response.on_hover_ui(|ui| {
+                                            ui.label(format!("Byte: {}", byte_idx));
+                                            ui.label(format!("Value: 0x{:02X} ({})", byte, byte));
+                                            ui.label(format!("ASCII: '{}'", ch));
+                                            ui.label(format!("Binary: {:08b}", byte));
+                                        });
+                                    }
+                                }
+                            });
+                        }
+                    });
+            });
     }
 
     fn open_operation_creator(&mut self, op_type: OperationType) {
@@ -400,11 +566,19 @@ impl BitApp {
         // Reset input fields
         self.takeskip_name.clear();
         self.takeskip_input.clear();
+        self.loadfile_name.clear();
+        self.loadfile_path = None;
     }
 
     fn open_operation_editor(&mut self, index: usize) {
         if let Some(op) = self.operations.get(index) {
             match op {
+                BitOperation::LoadFile { name, file_path } => {
+                    self.show_operation_menu = Some(OperationType::LoadFile);
+                    self.editing_operation_index = Some(index);
+                    self.loadfile_name = name.clone();
+                    self.loadfile_path = Some(file_path.clone());
+                }
                 BitOperation::TakeSkipSequence { name, sequence } => {
                     self.show_operation_menu = Some(OperationType::TakeSkipSequence);
                     self.editing_operation_index = Some(index);
@@ -432,6 +606,24 @@ impl BitApp {
     fn save_current_operation(&mut self) {
         if let Some(op_type) = self.show_operation_menu {
             let new_operation = match op_type {
+                OperationType::LoadFile => {
+                    if self.loadfile_path.is_none() {
+                        self.error_message = Some("Please select a file to load".to_string());
+                        return;
+                    }
+                    
+                    let file_path = self.loadfile_path.clone().unwrap();
+                    let name = if self.loadfile_name.trim().is_empty() {
+                        format!("Load: {}", file_path.file_name().unwrap_or_default().to_string_lossy())
+                    } else {
+                        self.loadfile_name.clone()
+                    };
+                    
+                    BitOperation::LoadFile {
+                        name,
+                        file_path,
+                    }
+                }
                 OperationType::TakeSkipSequence => {
                     if self.takeskip_input.is_empty() {
                         self.error_message = Some("Operation sequence cannot be empty".to_string());
@@ -513,6 +705,8 @@ impl BitApp {
             self.editing_operation_index = None;
             self.takeskip_name.clear();
             self.takeskip_input.clear();
+            self.loadfile_name.clear();
+            self.loadfile_path = None;
             self.invert_name.clear();
             self.multiworksheet_name.clear();
             self.multiworksheet_ops.clear();
@@ -527,6 +721,8 @@ impl BitApp {
         self.editing_operation_index = None;
         self.takeskip_name.clear();
         self.takeskip_input.clear();
+        self.loadfile_name.clear();
+        self.loadfile_path = None;
         self.invert_name.clear();
         self.multiworksheet_name.clear();
         self.multiworksheet_ops.clear();
@@ -628,10 +824,6 @@ impl eframe::App for BitApp {
                 ui.heading("🔧 B.I.T. - Bit Information Tool");
                 
                 ui.separator();
-                
-                if ui.button("📂 Open File").clicked() {
-                    self.load_file();
-                }
 
                 if ui.button("💾 Save File").clicked() {
                     self.save_file();
@@ -645,6 +837,20 @@ impl eframe::App for BitApp {
 
                 if ui.button("🔍 Pattern Locator").clicked() {
                     self.show_pattern_locator = !self.show_pattern_locator;
+                }
+
+                ui.separator();
+
+                // View mode toggle
+                ui.label("View:");
+                if ui.selectable_label(self.view_mode == ViewMode::Bit, "⬛ Bit").clicked() {
+                    self.view_mode = ViewMode::Bit;
+                }
+                if ui.selectable_label(self.view_mode == ViewMode::Byte, "📊 Byte").clicked() {
+                    self.view_mode = ViewMode::Byte;
+                }
+                if ui.selectable_label(self.view_mode == ViewMode::Ascii, "🔤 ASCII").clicked() {
+                    self.view_mode = ViewMode::Ascii;
                 }
 
                 ui.separator();
@@ -664,11 +870,15 @@ impl eframe::App for BitApp {
 
                 if ui.selectable_label(self.show_original, "Original").clicked() {
                     self.show_original = true;
-                    self.update_viewer();
+                    if self.view_mode == ViewMode::Bit {
+                        self.update_viewer();
+                    }
                 }
                 if ui.selectable_label(!self.show_original, "Processed").clicked() {
                     self.show_original = false;
-                    self.update_viewer();
+                    if self.view_mode == ViewMode::Bit {
+                        self.update_viewer();
+                    }
                 }
             });
         });
@@ -685,6 +895,7 @@ impl eframe::App for BitApp {
                     .id_salt("available_ops")
                     .show(ui, |ui| {
                         let operations = [
+                            OperationType::LoadFile,
                             OperationType::TakeSkipSequence,
                             OperationType::InvertBits,
                             OperationType::MultiWorksheetLoad,
@@ -907,7 +1118,8 @@ impl eframe::App for BitApp {
                                         ui.painter().rect_stroke(
                                             line_rect,
                                             3.0,
-                                            egui::Stroke::new(2.0, egui::Color32::from_rgb(150, 200, 255))
+                                            egui::Stroke::new(2.0, egui::Color32::from_rgb(150, 200, 255)),
+                                            egui::epaint::StrokeKind::Middle
                                         );
                                     }
                                     
@@ -925,7 +1137,8 @@ impl eframe::App for BitApp {
                                         ui.painter().rect_stroke(
                                             line_rect,
                                             3.0,
-                                            egui::Stroke::new(2.0, egui::Color32::from_rgb(150, 200, 255))
+                                            egui::Stroke::new(2.0, egui::Color32::from_rgb(150, 200, 255)),
+                                            egui::epaint::StrokeKind::Middle
                                         );
                                     }
                                     
@@ -948,7 +1161,8 @@ impl eframe::App for BitApp {
                                             ui.painter().rect_stroke(
                                                 preview_rect,
                                                 4.0,
-                                                egui::Stroke::new(1.0, egui::Color32::from_rgb(100, 150, 255))
+                                                egui::Stroke::new(1.0, egui::Color32::from_rgb(100, 150, 255)),
+                                                egui::epaint::StrokeKind::Middle
                                             );
                                             ui.painter().text(
                                                 preview_rect.center(),
@@ -1006,6 +1220,139 @@ impl eframe::App for BitApp {
                     }
                 }
 
+                // Byte View Configuration (only shown in byte view mode)
+                if self.view_mode == ViewMode::Byte {
+                    ui.separator();
+                    ui.heading("📊 Byte View Config");
+                    
+                    ui.horizontal(|ui| {
+                        ui.label("Bytes per row:");
+                        let mut bytes_per_row = self.byte_viewer.config.bytes_per_row;
+                        if ui.add(egui::Slider::new(&mut bytes_per_row, 1..=64)).changed() {
+                            self.byte_viewer.set_bytes_per_row(bytes_per_row);
+                        }
+                    });
+                    
+                    ui.checkbox(&mut self.byte_viewer.config.show_hex_offset, "Show hex offset");
+                    
+                    ui.add_space(8.0);
+                    ui.strong("Protocol Columns");
+                    ui.label("Define labeled regions for protocol analysis");
+                    
+                    egui::ScrollArea::vertical()
+                        .id_salt("byte_columns")
+                        .max_height(200.0)
+                        .show(ui, |ui| {
+                            let mut to_remove = None;
+                            
+                            for (idx, column) in self.byte_viewer.config.columns.iter().enumerate() {
+                                ui.group(|ui| {
+                                    ui.horizontal(|ui| {
+                                        // Color indicator
+                                        let color_rect = ui.allocate_rect(
+                                            egui::Rect::from_min_size(
+                                                ui.cursor().min,
+                                                egui::vec2(20.0, 20.0)
+                                            ),
+                                            egui::Sense::hover()
+                                        );
+                                        ui.painter().rect_filled(
+                                            color_rect.rect,
+                                            3.0,
+                                            column.color32()
+                                        );
+                                        
+                                        ui.vertical(|ui| {
+                                            ui.label(&column.label);
+                                            ui.small(format!("Bits {}..{}", column.bit_start, column.bit_end));
+                                        });
+                                        
+                                        if ui.button("🗑").clicked() {
+                                            to_remove = Some(idx);
+                                        }
+                                    });
+                                });
+                            }
+                            
+                            if let Some(idx) = to_remove {
+                                self.byte_viewer.remove_column(idx);
+                            }
+                        });
+                    
+                    ui.horizontal(|ui| {
+                        if ui.button("➕ Add Column").clicked() {
+                            self.show_column_editor = true;
+                        }
+                        
+                        if ui.button("💾 Save Config").clicked() {
+                            if let Some(file_path) = rfd::FileDialog::new()
+                                .add_filter("JSON", &["json"])
+                                .set_file_name("protocol_config.json")
+                                .save_file() {
+                                match serde_json::to_string_pretty(&self.byte_viewer.config) {
+                                    Ok(json) => {
+                                        if let Err(e) = std::fs::write(&file_path, json) {
+                                            self.error_message = Some(format!("Failed to save config: {}", e));
+                                        }
+                                    }
+                                    Err(e) => {
+                                        self.error_message = Some(format!("Failed to serialize config: {}", e));
+                                    }
+                                }
+                            }
+                        }
+                        
+                        if ui.button("📂 Load Config").clicked() {
+                            if let Some(file_path) = rfd::FileDialog::new()
+                                .add_filter("JSON", &["json"])
+                                .pick_file() {
+                                match std::fs::read_to_string(&file_path) {
+                                    Ok(json) => {
+                                        match serde_json::from_str(&json) {
+                                            Ok(config) => {
+                                                self.byte_viewer.config = config;
+                                            }
+                                            Err(e) => {
+                                                self.error_message = Some(format!("Failed to parse config: {}", e));
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        self.error_message = Some(format!("Failed to read config file: {}", e));
+                                    }
+                                }
+                            }
+                        }
+                    });
+                    
+                    if ui.button("📄 Export Documentation").clicked() {
+                        if let Some(file_path) = rfd::FileDialog::new()
+                            .add_filter("Text", &["txt"])
+                            .set_file_name("protocol_documentation.txt")
+                            .save_file() {
+                            let mut doc = String::new();
+                            doc.push_str("Protocol Documentation\n");
+                            doc.push_str("=====================\n\n");
+                            doc.push_str(&format!("Bytes per row: {}\n\n", self.byte_viewer.config.bytes_per_row));
+                            doc.push_str("Field Definitions:\n");
+                            doc.push_str("------------------\n\n");
+                            
+                            for (idx, column) in self.byte_viewer.config.columns.iter().enumerate() {
+                                doc.push_str(&format!("{}. {}\n", idx + 1, column.label));
+                                doc.push_str(&format!("   Bit Range: {} - {}\n", column.bit_start, column.bit_end));
+                                let (start_byte, end_byte) = column.byte_range(self.byte_viewer.config.bytes_per_row);
+                                doc.push_str(&format!("   Byte Range: {} - {}\n", start_byte, end_byte));
+                                doc.push_str(&format!("   Color: RGB({}, {}, {})\n\n", 
+                                    column.color[0], column.color[1], column.color[2]));
+                            }
+                            
+                            if let Err(e) = std::fs::write(&file_path, doc) {
+                                self.error_message = Some(format!("Failed to export documentation: {}", e));
+                            }
+                        }
+                    }
+                }
+
                 ui.separator();
 
                 if let Some(path) = &self.current_file_path {
@@ -1019,11 +1366,12 @@ impl eframe::App for BitApp {
         // Bottom panel with frame length control
         egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.label("Frame Length:");
+                ui.label("Frame Length (bits per row):");
                 if ui.add(egui::Slider::new(&mut self.viewer.frame_length, 8..=512).logarithmic(true)).changed() {
                     self.settings.frame_length = self.viewer.frame_length;
                     self.settings.auto_save();
                 }
+                ui.label(format!("({} chars in ASCII view)", self.viewer.frame_length / 8));
             });
         });
 
@@ -1047,6 +1395,11 @@ impl eframe::App for BitApp {
                         if ui.selectable_label(self.viewer.shape == BitShape::Circle, "⚫ Circle").clicked() {
                             self.viewer.shape = BitShape::Circle;
                             self.settings.bit_shape = BitShape::Circle;
+                            self.settings.auto_save();
+                        }
+                        if ui.selectable_label(self.viewer.shape == BitShape::Octagon, "⬢ Octagon").clicked() {
+                            self.viewer.shape = BitShape::Octagon;
+                            self.settings.bit_shape = BitShape::Octagon;
                             self.settings.auto_save();
                         }
                     });
@@ -1383,6 +1736,44 @@ impl eframe::App for BitApp {
                 .resizable(false)
                 .show(ctx, |ui| {
                     match op_type {
+                        OperationType::LoadFile => {
+                            ui.heading("Load File");
+                            ui.separator();
+                            
+                            ui.horizontal(|ui| {
+                                ui.label("Name:");
+                                ui.text_edit_singleline(&mut self.loadfile_name);
+                            });
+                            ui.label("Give this operation a custom name (optional)");
+                            
+                            ui.add_space(8.0);
+                            
+                            ui.label("Select a file to load bits from:");
+                            
+                            if let Some(path) = &self.loadfile_path {
+                                ui.label(format!("📄 Selected: {}", path.display()));
+                            } else {
+                                ui.label("No file selected");
+                            }
+                            
+                            if ui.button("📂 Browse...").clicked() {
+                                if let Some(path) = rfd::FileDialog::new().pick_file() {
+                                    self.loadfile_path = Some(path);
+                                }
+                            }
+                            
+                            ui.add_space(8.0);
+                            
+                            ui.horizontal(|ui| {
+                                if ui.button("✓ Save").clicked() {
+                                    self.save_current_operation();
+                                }
+                                
+                                if ui.button("✗ Cancel").clicked() {
+                                    self.cancel_operation_edit();
+                                }
+                            });
+                        }
                         OperationType::TakeSkipSequence => {
                             ui.heading("Take/Skip Sequence");
                             ui.separator();
@@ -1560,6 +1951,114 @@ impl eframe::App for BitApp {
             }
         }
 
+        // Byte View Column Editor Window
+        if self.show_column_editor {
+            let mut open = true;
+            egui::Window::new("➕ Add Protocol Column")
+                .open(&mut open)
+                .resizable(false)
+                .show(ctx, |ui| {
+                    ui.heading("Define Protocol Column");
+                    ui.separator();
+                    
+                    ui.horizontal(|ui| {
+                        ui.label("Label:");
+                        ui.text_edit_singleline(&mut self.column_editor_label);
+                    });
+                    ui.label("Name for this field (e.g., 'Header', 'Checksum')");
+                    
+                    ui.add_space(8.0);
+                    
+                    ui.horizontal(|ui| {
+                        ui.label("Start bit:");
+                        ui.text_edit_singleline(&mut self.column_editor_bit_start);
+                    });
+                    
+                    ui.horizontal(|ui| {
+                        ui.label("End bit:");
+                        ui.text_edit_singleline(&mut self.column_editor_bit_end);
+                    });
+                    ui.label("Bit range within each row (0-based, inclusive)");
+                    
+                    ui.add_space(8.0);
+                    
+                    ui.label("Color:");
+                    ui.horizontal(|ui| {
+                        ui.label("R:");
+                        ui.add(egui::Slider::new(&mut self.column_editor_color[0], 0..=255));
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("G:");
+                        ui.add(egui::Slider::new(&mut self.column_editor_color[1], 0..=255));
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("B:");
+                        ui.add(egui::Slider::new(&mut self.column_editor_color[2], 0..=255));
+                    });
+                    
+                    // Color preview
+                    let color = egui::Color32::from_rgb(
+                        self.column_editor_color[0],
+                        self.column_editor_color[1],
+                        self.column_editor_color[2]
+                    );
+                    ui.horizontal(|ui| {
+                        ui.label("Preview:");
+                        let (rect, _) = ui.allocate_exact_size(
+                            egui::vec2(100.0, 30.0),
+                            egui::Sense::hover()
+                        );
+                        ui.painter().rect_filled(rect, 3.0, color);
+                    });
+                    
+                    ui.add_space(8.0);
+                    
+                    ui.horizontal(|ui| {
+                        if ui.button("✓ Add Column").clicked() {
+                            if let (Ok(start), Ok(end)) = (
+                                self.column_editor_bit_start.parse::<usize>(),
+                                self.column_editor_bit_end.parse::<usize>()
+                            ) {
+                                if start <= end {
+                                    let label = if self.column_editor_label.is_empty() {
+                                        format!("Column {}", self.byte_viewer.config.columns.len() + 1)
+                                    } else {
+                                        self.column_editor_label.clone()
+                                    };
+                                    
+                                    self.byte_viewer.add_column(
+                                        byte_viewer::ByteColumn::new(
+                                            label,
+                                            start,
+                                            end,
+                                            self.column_editor_color
+                                        )
+                                    );
+                                    
+                                    // Reset for next column
+                                    self.column_editor_label.clear();
+                                    self.column_editor_bit_start = format!("{}", end + 1);
+                                    self.column_editor_bit_end = format!("{}", end + 8);
+                                    self.show_column_editor = false;
+                                } else {
+                                    self.error_message = Some("Start bit must be <= end bit".to_string());
+                                }
+                            } else {
+                                self.error_message = Some("Invalid bit range values".to_string());
+                            }
+                        }
+                        
+                        if ui.button("✗ Cancel").clicked() {
+                            self.show_column_editor = false;
+                        }
+                    });
+                });
+            
+            if !open {
+                self.show_column_editor = false;
+            }
+        }
+
         egui::CentralPanel::default().show(ctx, |ui| {
             if let Some(error) = &self.error_message {
                 ui.colored_label(egui::Color32::RED, error);
@@ -1571,7 +2070,27 @@ impl eframe::App for BitApp {
                     ui.heading("Open a file to view its bits");
                 });
             } else {
-                self.viewer.show(ui);
+                match self.view_mode {
+                    ViewMode::Bit => {
+                        self.viewer.show(ui);
+                    }
+                    ViewMode::Byte => {
+                        let bits_to_display = if self.show_original {
+                            &self.original_bits
+                        } else {
+                            &self.processed_bits
+                        };
+                        self.byte_viewer.render(ui, bits_to_display);
+                    }
+                    ViewMode::Ascii => {
+                        let bits_to_display = if self.show_original {
+                            &self.original_bits
+                        } else {
+                            &self.processed_bits
+                        };
+                        self.render_ascii_view(ui, bits_to_display);
+                    }
+                }
             }
         });
     }

@@ -1,5 +1,6 @@
 use bitvec::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Operation {
@@ -28,6 +29,10 @@ pub struct OperationSequence {
 // Represents a complete operation that can be applied to bits
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum BitOperation {
+    LoadFile {
+        name: String,
+        file_path: PathBuf,
+    },
     TakeSkipSequence {
         name: String,
         sequence: OperationSequence,
@@ -55,6 +60,7 @@ pub struct WorksheetOperation {
 impl BitOperation {
     pub fn name(&self) -> &str {
         match self {
+            BitOperation::LoadFile { name, .. } => name,
             BitOperation::TakeSkipSequence { name, .. } => name,
             BitOperation::InvertBits { name } => name,
             BitOperation::MultiWorksheetLoad { name, .. } => name,
@@ -63,6 +69,9 @@ impl BitOperation {
 
     pub fn description(&self) -> String {
         match self {
+            BitOperation::LoadFile { file_path, .. } => {
+                format!("Load: {}", file_path.file_name().unwrap_or_default().to_string_lossy())
+            }
             BitOperation::TakeSkipSequence { sequence, .. } => sequence.to_string(),
             BitOperation::InvertBits { .. } => "Inverts all bits".to_string(),
             BitOperation::MultiWorksheetLoad { worksheet_operations, .. } => {
@@ -73,6 +82,11 @@ impl BitOperation {
 
     pub fn apply(&self, input: &BitVec<u8, Msb0>) -> BitVec<u8, Msb0> {
         match self {
+            BitOperation::LoadFile { .. } => {
+                // LoadFile operations are handled specially in the main application
+                // since they need file I/O. Return the input unchanged here.
+                input.clone()
+            }
             BitOperation::TakeSkipSequence { sequence, .. } => sequence.apply(input),
             BitOperation::InvertBits { .. } => {
                 let mut result = input.clone();
