@@ -10,14 +10,6 @@ pub struct LoadFileOperation {
 }
 
 impl LoadFileOperation {
-    pub fn new(name: String, file_path: PathBuf) -> Self {
-        Self {
-            name,
-            file_path,
-            enabled: true,
-        }
-    }
-
     pub fn description(&self) -> String {
         format!(
             "Load: {}",

@@ -10,15 +10,6 @@ pub struct TruncateBitsOperation {
 }
 
 impl TruncateBitsOperation {
-    pub fn new(name: String, start: usize, end: usize) -> Self {
-        Self {
-            name,
-            start,
-            end,
-            enabled: true,
-        }
-    }
-
     pub fn description(&self) -> String {
         format!("Keep bits {}-{}", self.start, self.end)
     }

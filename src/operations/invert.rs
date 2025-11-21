@@ -8,13 +8,6 @@ pub struct InvertBitsOperation {
 }
 
 impl InvertBitsOperation {
-    pub fn new(name: String) -> Self {
-        Self {
-            name,
-            enabled: true,
-        }
-    }
-
     pub fn description(&self) -> String {
         "Inverts all bits".to_string()
     }

@@ -17,14 +17,6 @@ pub struct MultiWorksheetLoadOperation {
 }
 
 impl MultiWorksheetLoadOperation {
-    pub fn new(name: String, worksheet_operations: Vec<WorksheetOperation>) -> Self {
-        Self {
-            name,
-            worksheet_operations,
-            enabled: true,
-        }
-    }
-
     pub fn description(&self) -> String {
         format!("Load from {} worksheet(s)", self.worksheet_operations.len())
     }

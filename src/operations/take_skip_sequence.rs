@@ -10,14 +10,6 @@ pub struct TakeSkipSequenceOperation {
 }
 
 impl TakeSkipSequenceOperation {
-    pub fn new(name: String, sequence: OperationSequence) -> Self {
-        Self {
-            name,
-            sequence,
-            enabled: true,
-        }
-    }
-
     pub fn description(&self) -> String {
         self.sequence.to_string()
     }

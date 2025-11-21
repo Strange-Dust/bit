@@ -7,7 +7,6 @@ pub mod take_skip_sequence;
 pub mod invert;
 pub mod multi_worksheet;
 pub mod truncate;
-pub mod interleave;
 
 // Re-export base types
 pub use base::OperationSequence;
@@ -20,6 +19,14 @@ pub use interleaver::{
 
 // Re-export worksheet operation
 pub use multi_worksheet::WorksheetOperation;
+
+// Import operation implementations for internal use
+use load_file::LoadFileOperation;
+use take_skip_sequence::TakeSkipSequenceOperation;
+use invert::InvertBitsOperation;
+use multi_worksheet::MultiWorksheetLoadOperation;
+use truncate::TruncateBitsOperation;
+use interleaver::InterleaveBitsOperation;
 
 use bitvec::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -100,107 +107,99 @@ impl BitOperation {
     pub fn description(&self) -> String {
         match self {
             BitOperation::LoadFile { file_path, .. } => {
-                format!("Load: {}", file_path.file_name().unwrap_or_default().to_string_lossy())
+                LoadFileOperation { 
+                    name: String::new(), 
+                    file_path: file_path.clone(), 
+                    enabled: true 
+                }.description()
             }
-            BitOperation::TakeSkipSequence { sequence, .. } => sequence.to_string(),
-            BitOperation::InvertBits { .. } => "Inverts all bits".to_string(),
+            BitOperation::TakeSkipSequence { sequence, .. } => {
+                TakeSkipSequenceOperation {
+                    name: String::new(),
+                    sequence: sequence.clone(),
+                    enabled: true,
+                }.description()
+            }
+            BitOperation::InvertBits { .. } => {
+                InvertBitsOperation {
+                    name: String::new(),
+                    enabled: true,
+                }.description()
+            }
             BitOperation::MultiWorksheetLoad { worksheet_operations, .. } => {
-                format!("Load from {} worksheet(s)", worksheet_operations.len())
+                MultiWorksheetLoadOperation {
+                    name: String::new(),
+                    worksheet_operations: worksheet_operations.clone(),
+                    enabled: true,
+                }.description()
             }
             BitOperation::TruncateBits { start, end, .. } => {
-                format!("Keep bits {}-{}", start, end)
+                TruncateBitsOperation {
+                    name: String::new(),
+                    start: *start,
+                    end: *end,
+                    enabled: true,
+                }.description()
             }
             BitOperation::InterleaveBits { interleaver_type, block_config, convolutional_config, symbol_config, .. } => {
-                match interleaver_type {
-                    InterleaverType::Block => {
-                        if let Some(cfg) = block_config {
-                            let dir = match cfg.direction {
-                                InterleaverDirection::Interleave => "Interleave",
-                                InterleaverDirection::Deinterleave => "Deinterleave",
-                            };
-                            format!("Block {}×{} {}", cfg.block_size, cfg.depth, dir)
-                        } else {
-                            "Block interleaver".to_string()
-                        }
-                    }
-                    InterleaverType::Convolutional => {
-                        if let Some(cfg) = convolutional_config {
-                            let dir = match cfg.direction {
-                                InterleaverDirection::Interleave => "Interleave",
-                                InterleaverDirection::Deinterleave => "Deinterleave",
-                            };
-                            format!("Conv B={} M={} {}", cfg.branches, cfg.delay_increment, dir)
-                        } else {
-                            "Convolutional interleaver".to_string()
-                        }
-                    }
-                    InterleaverType::Symbol => {
-                        if let Some(cfg) = symbol_config {
-                            let dir = match cfg.direction {
-                                InterleaverDirection::Interleave => "Interleave",
-                                InterleaverDirection::Deinterleave => "Deinterleave",
-                            };
-                            format!("Symbol {}×{} ({}bit) {}", cfg.block_size, cfg.depth, cfg.symbol_size, dir)
-                        } else {
-                            "Symbol interleaver".to_string()
-                        }
-                    }
-                }
+                InterleaveBitsOperation {
+                    name: String::new(),
+                    interleaver_type: *interleaver_type,
+                    block_config: block_config.clone(),
+                    convolutional_config: convolutional_config.clone(),
+                    symbol_config: symbol_config.clone(),
+                    enabled: true,
+                }.description()
             }
         }
     }
 
     pub fn apply(&self, input: &BitVec<u8, Msb0>) -> BitVec<u8, Msb0> {
         match self {
-            BitOperation::LoadFile { .. } => {
-                // LoadFile operations are handled specially in the main application
-                input.clone()
+            BitOperation::LoadFile { file_path, .. } => {
+                LoadFileOperation {
+                    name: String::new(),
+                    file_path: file_path.clone(),
+                    enabled: true,
+                }.apply(input)
             }
-            BitOperation::TakeSkipSequence { sequence, .. } => sequence.apply(input),
+            BitOperation::TakeSkipSequence { sequence, .. } => {
+                TakeSkipSequenceOperation {
+                    name: String::new(),
+                    sequence: sequence.clone(),
+                    enabled: true,
+                }.apply(input)
+            }
             BitOperation::InvertBits { .. } => {
-                let mut result = input.clone();
-                result.iter_mut().for_each(|mut bit| *bit = !*bit);
-                result
+                InvertBitsOperation {
+                    name: String::new(),
+                    enabled: true,
+                }.apply(input)
             }
-            BitOperation::MultiWorksheetLoad { .. } => {
-                // This operation type requires worksheet data
-                BitVec::new()
+            BitOperation::MultiWorksheetLoad { worksheet_operations, .. } => {
+                MultiWorksheetLoadOperation {
+                    name: String::new(),
+                    worksheet_operations: worksheet_operations.clone(),
+                    enabled: true,
+                }.apply(input)
             }
             BitOperation::TruncateBits { start, end, .. } => {
-                let len = input.len();
-                let actual_start = (*start).min(len);
-                let actual_end = (*end).min(len);
-                
-                if actual_start >= actual_end {
-                    return BitVec::new();
-                }
-                
-                input[actual_start..actual_end].to_bitvec()
+                TruncateBitsOperation {
+                    name: String::new(),
+                    start: *start,
+                    end: *end,
+                    enabled: true,
+                }.apply(input)
             }
             BitOperation::InterleaveBits { interleaver_type, block_config, convolutional_config, symbol_config, .. } => {
-                match interleaver_type {
-                    InterleaverType::Block => {
-                        if let Some(cfg) = block_config {
-                            cfg.apply(input)
-                        } else {
-                            input.clone()
-                        }
-                    }
-                    InterleaverType::Convolutional => {
-                        if let Some(cfg) = convolutional_config {
-                            cfg.apply(input)
-                        } else {
-                            input.clone()
-                        }
-                    }
-                    InterleaverType::Symbol => {
-                        if let Some(cfg) = symbol_config {
-                            cfg.apply(input)
-                        } else {
-                            input.clone()
-                        }
-                    }
-                }
+                InterleaveBitsOperation {
+                    name: String::new(),
+                    interleaver_type: *interleaver_type,
+                    block_config: block_config.clone(),
+                    convolutional_config: convolutional_config.clone(),
+                    symbol_config: symbol_config.clone(),
+                    enabled: true,
+                }.apply(input)
             }
         }
     }
