@@ -497,7 +497,7 @@ impl InterleaveBitsOperation {
                         InterleaverDirection::Interleave => "Interleave",
                         InterleaverDirection::Deinterleave => "Deinterleave",
                     };
-                    format!("Block {}×{} {}", cfg.block_size, cfg.depth, dir)
+                    format!("Block {}x{} {}", cfg.block_size, cfg.depth, dir)
                 } else {
                     "Block interleaver".to_string()
                 }
@@ -520,7 +520,7 @@ impl InterleaveBitsOperation {
                         InterleaverDirection::Deinterleave => "Deinterleave",
                     };
                     format!(
-                        "Symbol {}×{} ({}bit) {}",
+                        "Symbol {}x{} ({}bit) {}",
                         cfg.block_size, cfg.depth, cfg.symbol_size, dir
                     )
                 } else {
