@@ -2,7 +2,7 @@
 
 use crate::analysis::{Pattern, PatternFormat, FrameWidthAnalysis};
 use crate::core::{ViewMode, OperationType};
-use crate::processing::{BitOperation, OperationSequence, WorksheetOperation};
+use crate::operations::{BitOperation, OperationSequence, WorksheetOperation};
 use crate::storage::{read_file_as_bits, read_file_as_bits_with_progress, write_bits_to_file, AppSession, AppSettings, Worksheet, LoadProgress};
 use crate::viewers::{BitViewer, ByteViewer};
 use bitvec::prelude::*;
@@ -70,8 +70,8 @@ pub struct BitApp {
     
     // Interleave Bits editor state
     pub interleave_name: String,
-    pub interleave_type: crate::processing::InterleaverType,
-    pub interleave_direction: crate::processing::InterleaverDirection,
+    pub interleave_type: crate::operations::InterleaverType,
+    pub interleave_direction: crate::operations::InterleaverDirection,
     // Block interleaver params
     pub interleave_block_size: String,
     pub interleave_depth: String,
@@ -186,8 +186,8 @@ impl Default for BitApp {
             truncate_start: String::from("0"),
             truncate_end: String::new(),
             interleave_name: String::new(),
-            interleave_type: crate::processing::InterleaverType::Block,
-            interleave_direction: crate::processing::InterleaverDirection::Interleave,
+            interleave_type: crate::operations::InterleaverType::Block,
+            interleave_direction: crate::operations::InterleaverDirection::Interleave,
             interleave_block_size: String::from("8"),
             interleave_depth: String::from("4"),
             interleave_branches: String::from("4"),
@@ -831,8 +831,8 @@ impl BitApp {
         self.truncate_start = String::from("0");
         self.truncate_end.clear();
         self.interleave_name.clear();
-        self.interleave_type = crate::processing::InterleaverType::Block;
-        self.interleave_direction = crate::processing::InterleaverDirection::Interleave;
+        self.interleave_type = crate::operations::InterleaverType::Block;
+        self.interleave_direction = crate::operations::InterleaverDirection::Interleave;
         self.interleave_block_size = String::from("8");
         self.interleave_depth = String::from("4");
         self.interleave_branches = String::from("4");
@@ -877,21 +877,21 @@ impl BitApp {
                     self.interleave_type = *interleaver_type;
                     
                     match interleaver_type {
-                        crate::processing::InterleaverType::Block => {
+                        crate::operations::InterleaverType::Block => {
                             if let Some(cfg) = block_config {
                                 self.interleave_direction = cfg.direction;
                                 self.interleave_block_size = cfg.block_size.to_string();
                                 self.interleave_depth = cfg.depth.to_string();
                             }
                         }
-                        crate::processing::InterleaverType::Convolutional => {
+                        crate::operations::InterleaverType::Convolutional => {
                             if let Some(cfg) = convolutional_config {
                                 self.interleave_direction = cfg.direction;
                                 self.interleave_branches = cfg.branches.to_string();
                                 self.interleave_delay_increment = cfg.delay_increment.to_string();
                             }
                         }
-                        crate::processing::InterleaverType::Symbol => {
+                        crate::operations::InterleaverType::Symbol => {
                             if let Some(cfg) = symbol_config {
                                 self.interleave_direction = cfg.direction;
                                 self.interleave_symbol_size = cfg.symbol_size.to_string();
@@ -1001,8 +1001,8 @@ impl BitApp {
                     BitOperation::TruncateBits { name, start, end, enabled: true }
                 }
                 OperationType::InterleaveBits => {
-                    use crate::processing::{BlockInterleaverConfig, ConvolutionalInterleaverConfig, InterleaverType};
-                    use crate::processing::interleaver::SymbolInterleaverConfig;
+                    use crate::operations::{BlockInterleaverConfig, ConvolutionalInterleaverConfig, InterleaverType};
+                    use crate::operations::interleaver::SymbolInterleaverConfig;
                     
                     let name = if self.interleave_name.trim().is_empty() {
                         match self.interleave_type {
@@ -1167,8 +1167,8 @@ impl BitApp {
         self.truncate_start = String::from("0");
         self.truncate_end.clear();
         self.interleave_name.clear();
-        self.interleave_type = crate::processing::InterleaverType::Block;
-        self.interleave_direction = crate::processing::InterleaverDirection::Interleave;
+        self.interleave_type = crate::operations::InterleaverType::Block;
+        self.interleave_direction = crate::operations::InterleaverDirection::Interleave;
         self.interleave_block_size = String::from("8");
         self.interleave_depth = String::from("4");
         self.interleave_branches = String::from("4");

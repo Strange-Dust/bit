@@ -581,9 +581,9 @@ fn render_interleave_editor(app: &mut BitApp, ui: &mut egui::Ui) {
     // Type selection
     ui.horizontal(|ui| {
         ui.label("Interleaver Type:");
-        ui.radio_value(&mut app.interleave_type, crate::processing::InterleaverType::Block, "Block");
-        ui.radio_value(&mut app.interleave_type, crate::processing::InterleaverType::Convolutional, "Convolutional");
-        ui.radio_value(&mut app.interleave_type, crate::processing::InterleaverType::Symbol, "Symbol");
+        ui.radio_value(&mut app.interleave_type, crate::operations::InterleaverType::Block, "Block");
+        ui.radio_value(&mut app.interleave_type, crate::operations::InterleaverType::Convolutional, "Convolutional");
+        ui.radio_value(&mut app.interleave_type, crate::operations::InterleaverType::Symbol, "Symbol");
     });
     
     ui.add_space(4.0);
@@ -591,8 +591,8 @@ fn render_interleave_editor(app: &mut BitApp, ui: &mut egui::Ui) {
     // Direction selection
     ui.horizontal(|ui| {
         ui.label("Direction:");
-        ui.radio_value(&mut app.interleave_direction, crate::processing::InterleaverDirection::Interleave, "Interleave");
-        ui.radio_value(&mut app.interleave_direction, crate::processing::InterleaverDirection::Deinterleave, "De-interleave");
+        ui.radio_value(&mut app.interleave_direction, crate::operations::InterleaverDirection::Interleave, "Interleave");
+        ui.radio_value(&mut app.interleave_direction, crate::operations::InterleaverDirection::Deinterleave, "De-interleave");
     });
     
     ui.add_space(8.0);
@@ -600,7 +600,7 @@ fn render_interleave_editor(app: &mut BitApp, ui: &mut egui::Ui) {
     
     // Parameters based on type
     match app.interleave_type {
-        crate::processing::InterleaverType::Block => {
+        crate::operations::InterleaverType::Block => {
             ui.label("📦 Block Interleaver Parameters:");
             ui.add_space(4.0);
             
@@ -642,12 +642,12 @@ fn render_interleave_editor(app: &mut BitApp, ui: &mut egui::Ui) {
                         ui.add_space(4.0);
                         
                         match app.interleave_direction {
-                            crate::processing::InterleaverDirection::Interleave => {
+                            crate::operations::InterleaverDirection::Interleave => {
                                 ui.label("Write row-wise → Read column-wise:");
                                 ui.add_space(2.0);
                                 render_block_matrix_preview(ui, block_size, depth);
                             }
-                            crate::processing::InterleaverDirection::Deinterleave => {
+                            crate::operations::InterleaverDirection::Deinterleave => {
                                 ui.label("Write column-wise → Read row-wise:");
                                 ui.add_space(2.0);
                                 render_block_matrix_preview(ui, block_size, depth);
@@ -670,7 +670,7 @@ fn render_interleave_editor(app: &mut BitApp, ui: &mut egui::Ui) {
             ui.label("• Math supported: 2*4, 16/2, 8+4, etc.");
         }
         
-        crate::processing::InterleaverType::Convolutional => {
+        crate::operations::InterleaverType::Convolutional => {
             ui.label("🔄 Convolutional Interleaver Parameters:");
             ui.add_space(4.0);
             
@@ -712,12 +712,12 @@ fn render_interleave_editor(app: &mut BitApp, ui: &mut egui::Ui) {
                         ui.add_space(4.0);
                         
                         match app.interleave_direction {
-                            crate::processing::InterleaverDirection::Interleave => {
+                            crate::operations::InterleaverDirection::Interleave => {
                                 ui.label("Round-robin distribution with delay:");
                                 ui.add_space(2.0);
                                 render_convolutional_preview(ui, branches, delay_inc);
                             }
-                            crate::processing::InterleaverDirection::Deinterleave => {
+                            crate::operations::InterleaverDirection::Deinterleave => {
                                 ui.label("Reverse round-robin with delay:");
                                 ui.add_space(2.0);
                                 render_convolutional_preview(ui, branches, delay_inc);
@@ -740,7 +740,7 @@ fn render_interleave_editor(app: &mut BitApp, ui: &mut egui::Ui) {
             ui.label("• Provides time-diversity for burst errors");
         }
         
-        crate::processing::InterleaverType::Symbol => {
+        crate::operations::InterleaverType::Symbol => {
             ui.label("🔤 Symbol Interleaver Parameters:");
             ui.add_space(4.0);
             

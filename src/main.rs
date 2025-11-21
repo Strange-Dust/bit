@@ -1,7 +1,7 @@
 mod analysis;
 mod app;
 mod core;
-mod processing;
+mod operations;
 mod storage;
 mod ui;
 mod utils;

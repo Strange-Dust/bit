@@ -1,4 +1,4 @@
-use crate::processing::BitOperation;
+use crate::operations::BitOperation;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 

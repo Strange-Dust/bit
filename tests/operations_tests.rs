@@ -1,4 +1,4 @@
-use bit::processing::{Operation, OperationSequence, BitOperation};
+use bit::operations::{Operation, OperationSequence, BitOperation};
 use bitvec::prelude::*;
 
 #[cfg(test)]
