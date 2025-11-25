@@ -26,12 +26,12 @@ impl AppSession {
     
     pub fn save(&self) -> Result<(), String> {
         let path = Self::session_file_path();
-        let json = serde_json::to_string_pretty(self)
+        let json = serde_json::to_string(self)
             .map_err(|e| format!("Failed to serialize session: {}", e))?;
-        
+
         std::fs::write(&path, json)
             .map_err(|e| format!("Failed to write session file: {}", e))?;
-        
+
         Ok(())
     }
     
@@ -58,10 +58,5 @@ impl AppSession {
                 .map_err(|e| format!("Failed to delete session file: {}", e))?;
         }
         Ok(())
-    }
-    
-    #[allow(dead_code)]
-    pub fn exists() -> bool {
-        Self::session_file_path().exists()
     }
 }

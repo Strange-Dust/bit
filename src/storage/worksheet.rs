@@ -19,12 +19,12 @@ impl Worksheet {
     }
     
     pub fn save_to_file(&self, path: &PathBuf) -> Result<(), String> {
-        let json = serde_json::to_string_pretty(self)
+        let json = serde_json::to_string(self)
             .map_err(|e| format!("Failed to serialize worksheet: {}", e))?;
-        
+
         std::fs::write(path, json)
             .map_err(|e| format!("Failed to write worksheet file: {}", e))?;
-        
+
         Ok(())
     }
     

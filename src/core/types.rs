@@ -60,16 +60,4 @@ impl OperationType {
             OperationType::InterleaveBits => "Interleave/de-interleave bits for error resilience",
         }
     }
-    
-    #[allow(dead_code)]
-    pub fn all() -> &'static [OperationType] {
-        &[
-            OperationType::LoadFile,
-            OperationType::TakeSkipSequence,
-            OperationType::InvertBits,
-            OperationType::MultiWorksheetLoad,
-            OperationType::TruncateBits,
-            OperationType::InterleaveBits,
-        ]
-    }
 }

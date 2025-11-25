@@ -50,12 +50,7 @@ impl BitViewer {
     pub fn clear_highlights(&mut self) {
         self.highlighted_bits.clear();
     }
-    
-    #[allow(dead_code)]
-    pub fn add_highlight(&mut self, bit_index: usize) {
-        self.highlighted_bits.insert(bit_index);
-    }
-    
+
     pub fn add_highlight_range(&mut self, start: usize, length: usize) {
         for i in start..(start + length) {
             self.highlighted_bits.insert(i);

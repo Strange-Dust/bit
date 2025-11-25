@@ -59,25 +59,28 @@ impl eframe::App for BitApp {
             ctx.request_repaint();
         }
 
-        // Apply font size to the context
-        let mut style = (*ctx.style()).clone();
-        style.text_styles.insert(
-            egui::TextStyle::Body,
-            egui::FontId::new(self.font_size, egui::FontFamily::Proportional),
-        );
-        style.text_styles.insert(
-            egui::TextStyle::Button,
-            egui::FontId::new(self.font_size, egui::FontFamily::Proportional),
-        );
-        style.text_styles.insert(
-            egui::TextStyle::Small,
-            egui::FontId::new(self.font_size * 0.85, egui::FontFamily::Proportional),
-        );
-        style.text_styles.insert(
-            egui::TextStyle::Heading,
-            egui::FontId::new(self.font_size * 1.3, egui::FontFamily::Proportional),
-        );
-        ctx.set_style(style);
+        // Apply font size to the context (only if changed)
+        if self.font_size != self.last_applied_font_size {
+            let mut style = (*ctx.style()).clone();
+            style.text_styles.insert(
+                egui::TextStyle::Body,
+                egui::FontId::new(self.font_size, egui::FontFamily::Proportional),
+            );
+            style.text_styles.insert(
+                egui::TextStyle::Button,
+                egui::FontId::new(self.font_size, egui::FontFamily::Proportional),
+            );
+            style.text_styles.insert(
+                egui::TextStyle::Small,
+                egui::FontId::new(self.font_size * 0.85, egui::FontFamily::Proportional),
+            );
+            style.text_styles.insert(
+                egui::TextStyle::Heading,
+                egui::FontId::new(self.font_size * 1.3, egui::FontFamily::Proportional),
+            );
+            ctx.set_style(style);
+            self.last_applied_font_size = self.font_size;
+        }
 
         // Show restore session dialog
         if self.show_restore_dialog {

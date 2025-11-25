@@ -17,14 +17,6 @@ pub enum OperationProgress {
     Complete(Result<BitVec<u8, Msb0>, String>),
 }
 
-/// Message for view rendering progress
-#[allow(dead_code)]
-pub enum RenderProgress {
-    Preparing { total_items: usize },
-    Rendering { rendered: usize, total: usize, description: String },
-    Complete,
-}
-
 pub struct BitApp {
     pub original_bits: BitVec<u8, Msb0>,
     pub processed_bits: BitVec<u8, Msb0>,
@@ -37,8 +29,9 @@ pub struct BitApp {
     pub show_original: bool,
     pub show_settings: bool,
     pub font_size: f32,
+    pub last_applied_font_size: f32, // Cache to avoid style cloning every frame
     pub settings: AppSettings,
-    
+
     // Worksheet management
     pub worksheets: Vec<Worksheet>,
     pub current_worksheet_index: usize,
@@ -119,11 +112,7 @@ pub struct BitApp {
     pub operation_progress: f32,
     
     // Rendering state
-    #[allow(dead_code)]
-    pub is_rendering: bool,
     pub render_progress_message: String,
-    #[allow(dead_code)]
-    pub render_progress: f32,
     pub defer_first_render: bool, // Defer first render to show "preparing" message
     
     // Frame Width Finder state
@@ -169,6 +158,7 @@ impl Default for BitApp {
             show_original: true,
             show_settings: false,
             font_size: settings.font_size,
+            last_applied_font_size: 0.0, // Initialize to 0 to force update on first frame
             settings,
             worksheets,
             current_worksheet_index: 0,
@@ -218,9 +208,7 @@ impl Default for BitApp {
             operation_receiver: None,
             operation_progress_message: String::new(),
             operation_progress: 0.0,
-            is_rendering: false,
             render_progress_message: String::new(),
-            render_progress: 0.0,
             defer_first_render: false,
             show_frame_width_finder: false,
             frame_width_min: 4,
@@ -386,17 +374,7 @@ impl BitApp {
         self.update_viewer();
         self.sync_to_worksheet();
     }
-    
-    #[allow(dead_code)]
-    pub fn clear_error(&mut self) {
-        self.error_message = None;
-    }
 
-    #[allow(dead_code)]
-    pub fn set_error(&mut self, message: String) {
-        self.error_message = Some(message);
-    }
-    
     /// Start loading a file asynchronously with progress reporting
     pub fn start_loading_file(&mut self, path: PathBuf) {
         let (tx, rx) = channel();
