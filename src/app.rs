@@ -1,13 +1,14 @@
 // Main application state and logic
 
 use crate::analysis::{Pattern, PatternFormat, FrameWidthAnalysis};
+use crate::app_state::{LoadingState, OperationProcessingState};
 use crate::core::{ViewMode, OperationType};
 use crate::operations::{BitOperation, OperationSequence, WorksheetOperation};
 use crate::storage::{read_file_as_bits, read_file_as_bits_with_progress, write_bits_to_file, AppSession, AppSettings, Worksheet, LoadProgress};
 use crate::viewers::{BitViewer, ByteViewer};
 use bitvec::prelude::*;
 use std::path::PathBuf;
-use std::sync::mpsc::{channel, Receiver};
+use std::sync::mpsc::channel;
 use std::thread;
 
 /// Message from async operation processing
@@ -99,18 +100,13 @@ pub struct BitApp {
     pub column_editor_bit_start: String,
     pub column_editor_bit_end: String,
     pub column_editor_color: [u8; 3],
-    
-    // File loading state
-    pub loading_receiver: Option<Receiver<LoadProgress>>,
-    pub loading_file_path: Option<PathBuf>,
-    pub loading_progress: f32,
-    pub loading_total: u64,
-    
-    // Operation processing state
-    pub operation_receiver: Option<Receiver<OperationProgress>>,
-    pub operation_progress_message: String,
-    pub operation_progress: f32,
-    
+
+    // File loading state (managed by state module)
+    pub loading_state: LoadingState,
+
+    // Operation processing state (managed by state module)
+    pub operation_processing_state: OperationProcessingState,
+
     // Rendering state
     pub render_progress_message: String,
     pub defer_first_render: bool, // Defer first render to show "preparing" message
@@ -201,13 +197,8 @@ impl Default for BitApp {
             column_editor_bit_start: String::from("0"),
             column_editor_bit_end: String::from("7"),
             column_editor_color: [100, 150, 200],
-            loading_receiver: None,
-            loading_file_path: None,
-            loading_progress: 0.0,
-            loading_total: 0,
-            operation_receiver: None,
-            operation_progress_message: String::new(),
-            operation_progress: 0.0,
+            loading_state: LoadingState::new(),
+            operation_processing_state: OperationProcessingState::new(),
             render_progress_message: String::new(),
             defer_first_render: false,
             show_frame_width_finder: false,
@@ -379,72 +370,38 @@ impl BitApp {
     pub fn start_loading_file(&mut self, path: PathBuf) {
         let (tx, rx) = channel();
         let path_clone = path.clone();
-        
+
         // Spawn background thread to load file
         thread::spawn(move || {
             let _ = read_file_as_bits_with_progress(&path_clone, tx);
         });
-        
-        self.loading_receiver = Some(rx);
-        self.loading_file_path = Some(path);
-        self.loading_progress = 0.0;
-        self.loading_total = 0;
+
+        self.loading_state.start(rx, path);
     }
     
     /// Check for loading progress updates and handle completion
     pub fn update_loading_progress(&mut self) {
-        let mut should_clear = false;
-        let mut result_bits: Option<Result<BitVec<u8, Msb0>, String>> = None;
-        let mut path_to_load: Option<PathBuf> = None;
-        
-        if let Some(receiver) = &self.loading_receiver {
-            // Process all available messages
-            while let Ok(msg) = receiver.try_recv() {
-                match msg {
-                    LoadProgress::Progress { loaded, total } => {
-                        self.loading_total = total;
-                        self.loading_progress = if total > 0 {
-                            loaded as f32 / total as f32
-                        } else {
-                            0.0
-                        };
-                    }
-                    LoadProgress::Complete(result) => {
-                        // Loading finished
-                        should_clear = true;
-                        result_bits = Some(result);
-                        path_to_load = self.loading_file_path.clone();
+        // Poll the loading state for completion
+        if let Some(complete) = self.loading_state.poll() {
+            match complete.result {
+                Ok(bits) => {
+                    self.original_bits = bits.clone();
+                    self.processed_bits = bits;
+                    self.current_file_path = Some(complete.path);
+                    self.error_message = None;
+                    self.clear_pattern_matches(); // New file loaded, clear old patterns
+                    self.apply_operations();
+
+                    // If we loaded a large file, defer the first render to show "preparing" message
+                    if self.original_bits.len() > 10_000_000 {
+                        self.defer_first_render = true;
+                        self.render_progress_message = "Preparing view...".to_string();
+                    } else {
+                        self.update_viewer();
                     }
                 }
-            }
-        }
-        
-        // Handle completion outside of the borrow
-        if should_clear {
-            self.loading_receiver = None;
-            self.loading_file_path = None;
-            
-            if let Some(result) = result_bits {
-                match result {
-                    Ok(bits) => {
-                        self.original_bits = bits.clone();
-                        self.processed_bits = bits;
-                        self.current_file_path = path_to_load;
-                        self.error_message = None;
-                        self.clear_pattern_matches(); // New file loaded, clear old patterns
-                        self.apply_operations();
-                        
-                        // If we loaded a large file, defer the first render to show "preparing" message
-                        if self.original_bits.len() > 10_000_000 {
-                            self.defer_first_render = true;
-                            self.render_progress_message = "Preparing view...".to_string();
-                        } else {
-                            self.update_viewer();
-                        }
-                    }
-                    Err(e) => {
-                        self.error_message = Some(format!("Failed to load file: {}", e));
-                    }
+                Err(e) => {
+                    self.error_message = Some(format!("Failed to load file: {}", e));
                 }
             }
         }
@@ -452,12 +409,12 @@ impl BitApp {
     
     /// Check if currently loading a file
     pub fn is_loading(&self) -> bool {
-        self.loading_receiver.is_some()
+        self.loading_state.is_loading()
     }
     
     /// Check if currently processing operations
     pub fn is_processing_operations(&self) -> bool {
-        self.operation_receiver.is_some()
+        self.operation_processing_state.is_processing()
     }
     
     /// Start processing operations asynchronously
@@ -466,9 +423,9 @@ impl BitApp {
         let original_bits = self.original_bits.clone();
         let worksheets = self.worksheets.clone();
         let current_worksheet_index = self.current_worksheet_index;
-        
+
         let (tx, rx) = channel();
-        
+
         thread::spawn(move || {
             let _ = Self::process_operations_async(
                 operations,
@@ -478,10 +435,8 @@ impl BitApp {
                 tx
             );
         });
-        
-        self.operation_receiver = Some(rx);
-        self.operation_progress = 0.0;
-        self.operation_progress_message = "Starting...".to_string();
+
+        self.operation_processing_state.start(rx);
     }
     
     /// Process operations in background thread with progress reporting
@@ -630,55 +585,24 @@ impl BitApp {
     
     /// Update operation processing progress
     pub fn update_operation_progress(&mut self) {
-        let mut should_clear = false;
-        let mut result_bits: Option<Result<BitVec<u8, Msb0>, String>> = None;
-        
-        if let Some(receiver) = &self.operation_receiver {
-            while let Ok(msg) = receiver.try_recv() {
-                match msg {
-                    OperationProgress::LoadingFile { path, loaded, total } => {
-                        let progress = if total > 0 { loaded as f32 / total as f32 } else { 0.0 };
-                        self.operation_progress = progress;
-                        self.operation_progress_message = format!(
-                            "Loading {}: {:.1} MB / {:.1} MB",
-                            path.file_name().unwrap_or_default().to_string_lossy(),
-                            loaded as f64 / (1024.0 * 1024.0),
-                            total as f64 / (1024.0 * 1024.0)
-                        );
-                    }
-                    OperationProgress::ProcessingOperation { index, total, description } => {
-                        self.operation_progress = index as f32 / total as f32;
-                        self.operation_progress_message = description;
-                    }
-                    OperationProgress::Complete(result) => {
-                        should_clear = true;
-                        result_bits = Some(result);
+        // Poll the operation processing state for completion
+        if let Some(complete) = self.operation_processing_state.poll() {
+            match complete.result {
+                Ok(bits) => {
+                    self.processed_bits = bits;
+                    self.show_original = false;
+                    self.error_message = None;
+
+                    // If we processed a large amount of data, defer the first render to show "preparing" message
+                    if self.processed_bits.len() > 10_000_000 {
+                        self.defer_first_render = true;
+                        self.render_progress_message = "Preparing view...".to_string();
+                    } else {
+                        self.update_viewer();
                     }
                 }
-            }
-        }
-        
-        if should_clear {
-            self.operation_receiver = None;
-            
-            if let Some(result) = result_bits {
-                match result {
-                    Ok(bits) => {
-                        self.processed_bits = bits;
-                        self.show_original = false;
-                        self.error_message = None;
-                        
-                        // If we processed a large amount of data, defer the first render to show "preparing" message
-                        if self.processed_bits.len() > 10_000_000 {
-                            self.defer_first_render = true;
-                            self.render_progress_message = "Preparing view...".to_string();
-                        } else {
-                            self.update_viewer();
-                        }
-                    }
-                    Err(e) => {
-                        self.error_message = Some(e);
-                    }
+                Err(e) => {
+                    self.error_message = Some(e);
                 }
             }
         }

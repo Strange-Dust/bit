@@ -1,5 +1,6 @@
 mod analysis;
 mod app;
+mod app_state;
 mod core;
 mod operations;
 mod storage;
@@ -126,22 +127,22 @@ impl eframe::App for BitApp {
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .show(ctx, |ui| {
                     ui.vertical_centered(|ui| {
-                        if let Some(path) = &self.loading_file_path {
+                        if let Some(path) = &self.loading_state.file_path {
                             ui.label(format!("Loading: {}", path.file_name().unwrap_or_default().to_string_lossy()));
                         }
                         ui.add_space(10.0);
-                        
+
                         // Progress bar
-                        let progress_bar = egui::ProgressBar::new(self.loading_progress)
+                        let progress_bar = egui::ProgressBar::new(self.loading_state.progress)
                             .show_percentage()
                             .desired_width(300.0);
                         ui.add(progress_bar);
-                        
+
                         ui.add_space(5.0);
-                        
+
                         // Show loaded/total bytes
-                        let loaded_mb = (self.loading_total as f64 * self.loading_progress as f64) / (1024.0 * 1024.0);
-                        let total_mb = self.loading_total as f64 / (1024.0 * 1024.0);
+                        let loaded_mb = (self.loading_state.total as f64 * self.loading_state.progress as f64) / (1024.0 * 1024.0);
+                        let total_mb = self.loading_state.total as f64 / (1024.0 * 1024.0);
                         ui.label(format!("{:.2} MB / {:.2} MB", loaded_mb, total_mb));
                     });
                 });
@@ -158,11 +159,11 @@ impl eframe::App for BitApp {
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .show(ctx, |ui| {
                     ui.vertical_centered(|ui| {
-                        ui.label(&self.operation_progress_message);
+                        ui.label(&self.operation_processing_state.progress_message);
                         ui.add_space(10.0);
-                        
+
                         // Progress bar
-                        let progress_bar = egui::ProgressBar::new(self.operation_progress)
+                        let progress_bar = egui::ProgressBar::new(self.operation_processing_state.progress)
                             .show_percentage()
                             .desired_width(300.0);
                         ui.add(progress_bar);

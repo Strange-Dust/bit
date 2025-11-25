@@ -1,6 +1,7 @@
 // Library exports for testing and external use
 pub mod analysis;
 pub mod app;
+pub mod app_state;
 pub mod core;
 pub mod operations;
 pub mod storage;
