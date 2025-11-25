@@ -14,6 +14,8 @@ impl TakeSkipSequenceOperation {
         self.sequence.to_string()
     }
 
+    /// Apply take/skip sequence operation to input bits.
+    /// Delegates to OperationSequence which takes a reference for sequential processing.
     pub fn apply(&self, input: &BitVec<u8, Msb0>) -> BitVec<u8, Msb0> {
         self.sequence.apply(input)
     }

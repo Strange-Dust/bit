@@ -75,8 +75,11 @@ impl OperationSequence {
             .join("")
     }
 
+    /// Apply the operation sequence to input bits.
+    /// Note: Takes a reference because the sequence may repeat through the input,
+    /// requiring multiple passes. The result is built incrementally.
     pub fn apply(&self, input: &BitVec<u8, Msb0>) -> BitVec<u8, Msb0> {
-        let mut result = BitVec::new();
+        let mut result = BitVec::with_capacity(input.len());
         let mut pos = 0;
 
         while pos < input.len() {

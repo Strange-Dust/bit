@@ -14,7 +14,10 @@ impl TruncateBitsOperation {
         format!("Keep bits {}-{}", self.start, self.end)
     }
 
-    pub fn apply(&self, input: &BitVec<u8, Msb0>) -> BitVec<u8, Msb0> {
+    /// Apply truncate operation to the input bits.
+    /// Takes ownership of input to enable potential future optimizations.
+    /// Note: Slicing still requires copying the extracted portion.
+    pub fn apply(&self, input: BitVec<u8, Msb0>) -> BitVec<u8, Msb0> {
         let len = input.len();
         let actual_start = self.start.min(len);
         let actual_end = self.end.min(len);

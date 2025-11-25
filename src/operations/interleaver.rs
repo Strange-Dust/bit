@@ -54,8 +54,9 @@ impl BlockInterleaverConfig {
         }
     }
 
-    /// Apply block interleaving to input bits
-    pub fn apply(&self, input: &BitVec<u8, Msb0>) -> BitVec<u8, Msb0> {
+    /// Apply block interleaving to input bits.
+    /// Takes ownership to avoid cloning large data structures.
+    pub fn apply(&self, input: BitVec<u8, Msb0>) -> BitVec<u8, Msb0> {
         match self.direction {
             InterleaverDirection::Interleave => self.interleave(input),
             InterleaverDirection::Deinterleave => self.deinterleave(input),
@@ -63,14 +64,14 @@ impl BlockInterleaverConfig {
     }
 
     /// Block interleaving: write row-wise, read column-wise
-    fn interleave(&self, input: &BitVec<u8, Msb0>) -> BitVec<u8, Msb0> {
+    fn interleave(&self, input: BitVec<u8, Msb0>) -> BitVec<u8, Msb0> {
         if input.is_empty() || self.block_size == 0 || self.depth == 0 {
-            return input.clone();
+            return input;
         }
 
-        let mut result = BitVec::new();
         let matrix_size = self.block_size * self.depth;
-        
+        let mut result = BitVec::with_capacity(input.len());
+
         // Process input in matrix_size chunks
         for chunk_start in (0..input.len()).step_by(matrix_size) {
             let chunk_end = (chunk_start + matrix_size).min(input.len());
@@ -102,12 +103,12 @@ impl BlockInterleaverConfig {
     }
 
     /// Block deinterleaving: write column-wise, read row-wise
-    fn deinterleave(&self, input: &BitVec<u8, Msb0>) -> BitVec<u8, Msb0> {
+    fn deinterleave(&self, input: BitVec<u8, Msb0>) -> BitVec<u8, Msb0> {
         if input.is_empty() || self.block_size == 0 || self.depth == 0 {
-            return input.clone();
+            return input;
         }
 
-        let mut result = BitVec::new();
+        let mut result = BitVec::with_capacity(input.len());
         let matrix_size = self.block_size * self.depth;
         
         // Process input in matrix_size chunks
@@ -151,8 +152,9 @@ impl ConvolutionalInterleaverConfig {
         }
     }
 
-    /// Apply convolutional interleaving to input bits
-    pub fn apply(&self, input: &BitVec<u8, Msb0>) -> BitVec<u8, Msb0> {
+    /// Apply convolutional interleaving to input bits.
+    /// Takes ownership to avoid cloning large data structures.
+    pub fn apply(&self, input: BitVec<u8, Msb0>) -> BitVec<u8, Msb0> {
         match self.direction {
             InterleaverDirection::Interleave => self.interleave(input),
             InterleaverDirection::Deinterleave => self.deinterleave(input),
@@ -160,9 +162,9 @@ impl ConvolutionalInterleaverConfig {
     }
 
     /// Convolutional interleaving: distribute bits across branches with increasing delays
-    fn interleave(&self, input: &BitVec<u8, Msb0>) -> BitVec<u8, Msb0> {
+    fn interleave(&self, input: BitVec<u8, Msb0>) -> BitVec<u8, Msb0> {
         if input.is_empty() || self.branches == 0 {
-            return input.clone();
+            return input;
         }
 
         // Create delay lines for each branch
@@ -190,9 +192,9 @@ impl ConvolutionalInterleaverConfig {
     }
 
     /// Convolutional deinterleaving: reverse the interleaving process
-    fn deinterleave(&self, input: &BitVec<u8, Msb0>) -> BitVec<u8, Msb0> {
+    fn deinterleave(&self, input: BitVec<u8, Msb0>) -> BitVec<u8, Msb0> {
         if input.is_empty() || self.branches == 0 {
-            return input.clone();
+            return input;
         }
 
         // Create delay lines for each branch (inverse delays)
@@ -238,8 +240,9 @@ impl SymbolInterleaverConfig {
         }
     }
 
-    /// Apply symbol-level interleaving to input bits
-    pub fn apply(&self, input: &BitVec<u8, Msb0>) -> BitVec<u8, Msb0> {
+    /// Apply symbol-level interleaving to input bits.
+    /// Takes ownership to avoid cloning large data structures.
+    pub fn apply(&self, input: BitVec<u8, Msb0>) -> BitVec<u8, Msb0> {
         match self.direction {
             InterleaverDirection::Interleave => self.interleave(input),
             InterleaverDirection::Deinterleave => self.deinterleave(input),
@@ -248,9 +251,9 @@ impl SymbolInterleaverConfig {
 
     /// Symbol interleaving: write symbols row-wise, read column-wise
     /// Treats each symbol_size bits as an atomic unit
-    fn interleave(&self, input: &BitVec<u8, Msb0>) -> BitVec<u8, Msb0> {
+    fn interleave(&self, input: BitVec<u8, Msb0>) -> BitVec<u8, Msb0> {
         if input.is_empty() || self.symbol_size == 0 || self.block_size == 0 || self.depth == 0 {
-            return input.clone();
+            return input;
         }
 
         let mut result = BitVec::new();
@@ -300,9 +303,9 @@ impl SymbolInterleaverConfig {
     }
 
     /// Symbol deinterleaving: write symbols column-wise, read row-wise
-    fn deinterleave(&self, input: &BitVec<u8, Msb0>) -> BitVec<u8, Msb0> {
+    fn deinterleave(&self, input: BitVec<u8, Msb0>) -> BitVec<u8, Msb0> {
         if input.is_empty() || self.symbol_size == 0 || self.block_size == 0 || self.depth == 0 {
-            return input.clone();
+            return input;
         }
 
         let mut result = BitVec::new();
@@ -363,8 +366,8 @@ mod tests {
         // Output: AC BD (column-wise)
         let input = bitvec![u8, Msb0; 1, 0, 1, 1]; // ABCD = 1011
         let config = BlockInterleaverConfig::new(2, 2, InterleaverDirection::Interleave);
-        let result = config.apply(&input);
-        
+        let result = config.apply(input);
+
         assert_eq!(result, bitvec![u8, Msb0; 1, 1, 0, 1]); // ACBD = 1101
     }
 
@@ -373,21 +376,21 @@ mod tests {
         // Reverse of the above
         let input = bitvec![u8, Msb0; 1, 1, 0, 1]; // ACBD = 1101
         let config = BlockInterleaverConfig::new(2, 2, InterleaverDirection::Deinterleave);
-        let result = config.apply(&input);
-        
+        let result = config.apply(input);
+
         assert_eq!(result, bitvec![u8, Msb0; 1, 0, 1, 1]); // ABCD = 1011
     }
 
     #[test]
     fn test_block_interleave_roundtrip() {
         let input = bitvec![u8, Msb0; 1, 0, 1, 0, 1, 1, 0, 0];
-        
+
         let interleave_config = BlockInterleaverConfig::new(4, 2, InterleaverDirection::Interleave);
-        let interleaved = interleave_config.apply(&input);
-        
+        let interleaved = interleave_config.apply(input.clone());
+
         let deinterleave_config = BlockInterleaverConfig::new(4, 2, InterleaverDirection::Deinterleave);
-        let recovered = deinterleave_config.apply(&interleaved);
-        
+        let recovered = deinterleave_config.apply(interleaved);
+
         assert_eq!(input, recovered);
     }
 
@@ -398,11 +401,12 @@ mod tests {
         // Branch 1: delay 1
         // Branch 2: delay 2
         let input = bitvec![u8, Msb0; 1, 0, 1, 1, 0, 1];
+        let input_len = input.len();
         let config = ConvolutionalInterleaverConfig::new(3, 1, InterleaverDirection::Interleave);
-        let result = config.apply(&input);
-        
+        let result = config.apply(input);
+
         // Result should have same length or slightly less due to delay initialization
-        assert!(result.len() <= input.len());
+        assert!(result.len() <= input_len);
     }
 
     #[test]
@@ -414,12 +418,14 @@ mod tests {
     #[test]
     fn test_empty_input() {
         let empty = BitVec::new();
-        
+        let empty2 = empty.clone();
+        let empty3 = empty.clone();
+
         let block_config = BlockInterleaverConfig::new(4, 2, InterleaverDirection::Interleave);
-        assert_eq!(block_config.apply(&empty), empty);
-        
+        assert_eq!(block_config.apply(empty), empty2);
+
         let conv_config = ConvolutionalInterleaverConfig::new(3, 1, InterleaverDirection::Interleave);
-        assert_eq!(conv_config.apply(&empty), empty);
+        assert_eq!(conv_config.apply(empty3), BitVec::<u8, Msb0>::new());
     }
 
     #[test]
@@ -431,13 +437,13 @@ mod tests {
         //                  CC DD
         // Read column-wise: AA CC BB DD
         let input = BitVec::<u8, Msb0>::from_slice(&[0x41u8, 0x41, 0x42, 0x42]); // AABB as bytes
-        
+
         let config = SymbolInterleaverConfig::new(8, 2, 2, InterleaverDirection::Interleave);
-        let result = config.apply(&input);
-        
+        let result = config.apply(input);
+
         // Expected: byte0, byte2, byte1, byte3 = 0x41, 0x42, 0x41, 0x42 = ABAB
         let expected = BitVec::<u8, Msb0>::from_slice(&[0x41u8, 0x42, 0x41, 0x42]);
-        
+
         assert_eq!(result, expected);
     }
 
@@ -447,32 +453,32 @@ mod tests {
         // Input: AA BB CC DD (each letter is ASCII character)
         // A = 0x41, B = 0x42, C = 0x43, D = 0x44
         let input = BitVec::<u8, Msb0>::from_slice(&[0x41u8, 0x41, 0x42, 0x42, 0x43, 0x43, 0x44, 0x44]); // AABBCCDD
-        
+
         // Use 2x4 matrix (2 cols, 4 rows):
         // Write row-wise:  A A
         //                  B B
         //                  C C
         //                  D D
         // Read column-wise: A B C D | A B C D → ABCD ABCD ✓
-        
+
         let config = SymbolInterleaverConfig::new(8, 2, 4, InterleaverDirection::Interleave);
-        let result = config.apply(&input);
-        
+        let result = config.apply(input);
+
         let expected = BitVec::<u8, Msb0>::from_slice(&[0x41u8, 0x42, 0x43, 0x44, 0x41, 0x42, 0x43, 0x44]); // ABCDABCD
-        
+
         assert_eq!(result, expected);
     }
 
     #[test]
     fn test_symbol_interleave_roundtrip() {
         let input = BitVec::<u8, Msb0>::from_slice(&[0xAAu8, 0xBB, 0xCC, 0xDD]);
-        
+
         let interleave_config = SymbolInterleaverConfig::new(8, 2, 2, InterleaverDirection::Interleave);
-        let interleaved = interleave_config.apply(&input);
-        
+        let interleaved = interleave_config.apply(input.clone());
+
         let deinterleave_config = SymbolInterleaverConfig::new(8, 2, 2, InterleaverDirection::Deinterleave);
-        let recovered = deinterleave_config.apply(&interleaved);
-        
+        let recovered = deinterleave_config.apply(interleaved);
+
         assert_eq!(input, recovered);
     }
 }
@@ -530,27 +536,29 @@ impl InterleaveBitsOperation {
         }
     }
 
-    pub fn apply(&self, input: &BitVec<u8, Msb0>) -> BitVec<u8, Msb0> {
+    /// Apply interleaving operation to input bits.
+    /// Takes ownership to avoid cloning large data structures.
+    pub fn apply(&self, input: BitVec<u8, Msb0>) -> BitVec<u8, Msb0> {
         match self.interleaver_type {
             InterleaverType::Block => {
                 if let Some(cfg) = &self.block_config {
                     cfg.apply(input)
                 } else {
-                    input.clone()
+                    input
                 }
             }
             InterleaverType::Convolutional => {
                 if let Some(cfg) = &self.convolutional_config {
                     cfg.apply(input)
                 } else {
-                    input.clone()
+                    input
                 }
             }
             InterleaverType::Symbol => {
                 if let Some(cfg) = &self.symbol_config {
                     cfg.apply(input)
                 } else {
-                    input.clone()
+                    input
                 }
             }
         }

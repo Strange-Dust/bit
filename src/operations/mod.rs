@@ -154,7 +154,12 @@ impl BitOperation {
         }
     }
 
-    pub fn apply(&self, input: &BitVec<u8, Msb0>) -> BitVec<u8, Msb0> {
+    /// Apply the operation to input bits.
+    /// Takes ownership to avoid unnecessary cloning of large data structures.
+    ///
+    /// Note: Some operations (LoadFile, MultiWorksheetLoad) are handled specially
+    /// in app.rs and don't use the input, but we maintain consistent signatures.
+    pub fn apply(&self, input: BitVec<u8, Msb0>) -> BitVec<u8, Msb0> {
         match self {
             BitOperation::LoadFile { file_path, .. } => {
                 LoadFileOperation {
@@ -164,11 +169,12 @@ impl BitOperation {
                 }.apply(input)
             }
             BitOperation::TakeSkipSequence { sequence, .. } => {
+                // TakeSkipSequence needs to borrow input because it iterates through it
                 TakeSkipSequenceOperation {
                     name: String::new(),
                     sequence: sequence.clone(),
                     enabled: true,
-                }.apply(input)
+                }.apply(&input)
             }
             BitOperation::InvertBits { .. } => {
                 InvertBitsOperation {

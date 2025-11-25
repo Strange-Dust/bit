@@ -285,7 +285,7 @@ mod bit_operation_tests {
             name: "test".to_string(),
             enabled: true,
         };
-        let result = op.apply(&input);
+        let result = op.apply(input);
         assert_eq!(result, bitvec![u8, Msb0; 0, 1, 0, 1]);
     }
 
@@ -298,7 +298,7 @@ mod bit_operation_tests {
             sequence: seq,
             enabled: true,
         };
-        let result = op.apply(&input);
+        let result = op.apply(input);
         // t2: 10, s1: skip, t2: 01, s1: skip (end)
         assert_eq!(result, bitvec![u8, Msb0; 1, 0, 0, 1]);
     }
@@ -340,7 +340,7 @@ mod bit_operation_tests {
             end: 5,
             enabled: true,
         };
-        let result = op.apply(&input);
+        let result = op.apply(input);
         assert_eq!(result, bitvec![u8, Msb0; 1, 0, 1, 0, 1]);
     }
 
@@ -353,7 +353,7 @@ mod bit_operation_tests {
             end: 7,
             enabled: true,
         };
-        let result = op.apply(&input);
+        let result = op.apply(input);
         // Bits 3-6 (indices 3,4,5,6)
         assert_eq!(result, bitvec![u8, Msb0; 0, 1, 1, 0]);
     }
@@ -367,7 +367,7 @@ mod bit_operation_tests {
             end: usize::MAX,
             enabled: true,
         };
-        let result = op.apply(&input);
+        let result = op.apply(input);
         // From index 5 to end
         assert_eq!(result, bitvec![u8, Msb0; 1, 0, 0, 1, 1]);
     }
@@ -375,15 +375,16 @@ mod bit_operation_tests {
     #[test]
     fn test_truncate_bits_beyond_length() {
         let input = bitvec![u8, Msb0; 1, 0, 1, 0];
+        let expected = input.clone();
         let op = BitOperation::TruncateBits {
             name: "test".to_string(),
             start: 0,
             end: 100,
             enabled: true,
         };
-        let result = op.apply(&input);
+        let result = op.apply(input);
         // Should clamp to actual length
-        assert_eq!(result, input);
+        assert_eq!(result, expected);
     }
 
     #[test]
@@ -395,7 +396,7 @@ mod bit_operation_tests {
             end: 20,
             enabled: true,
         };
-        let result = op.apply(&input);
+        let result = op.apply(input);
         // start >= end after clamping, should return empty
         assert_eq!(result.len(), 0);
     }
@@ -409,7 +410,7 @@ mod bit_operation_tests {
             end: 2,
             enabled: true,
         };
-        let result = op.apply(&input);
+        let result = op.apply(input);
         assert_eq!(result.len(), 0);
     }
 
@@ -422,7 +423,7 @@ mod bit_operation_tests {
             end: 3,
             enabled: true,
         };
-        let result = op.apply(&input);
+        let result = op.apply(input);
         assert_eq!(result, bitvec![u8, Msb0; 1]);
     }
 

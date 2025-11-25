@@ -12,9 +12,10 @@ impl InvertBitsOperation {
         "Inverts all bits".to_string()
     }
 
-    pub fn apply(&self, input: &BitVec<u8, Msb0>) -> BitVec<u8, Msb0> {
-        let mut result = input.clone();
-        result.iter_mut().for_each(|mut bit| *bit = !*bit);
-        result
+    /// Apply invert operation to the input bits.
+    /// Takes ownership of input to avoid cloning large data structures.
+    pub fn apply(&self, mut input: BitVec<u8, Msb0>) -> BitVec<u8, Msb0> {
+        input.iter_mut().for_each(|mut bit| *bit = !*bit);
+        input
     }
 }

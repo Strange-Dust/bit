@@ -21,9 +21,10 @@ impl MultiWorksheetLoadOperation {
         format!("Load from {} worksheet(s)", self.worksheet_operations.len())
     }
 
-    pub fn apply(&self, _input: &BitVec<u8, Msb0>) -> BitVec<u8, Msb0> {
-        // This operation type requires worksheet data, so it should be handled
-        // differently in the main application. For now, return empty.
+    /// Apply multi-worksheet load operation.
+    /// Takes ownership for consistency, though this operation type requires worksheet data
+    /// and is handled specially in the main application. Returns empty here.
+    pub fn apply(&self, _input: BitVec<u8, Msb0>) -> BitVec<u8, Msb0> {
         BitVec::new()
     }
 }

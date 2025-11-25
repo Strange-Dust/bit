@@ -20,9 +20,11 @@ impl LoadFileOperation {
         )
     }
 
-    pub fn apply(&self, input: &BitVec<u8, Msb0>) -> BitVec<u8, Msb0> {
-        // LoadFile operations are handled specially in the main application
-        // since they need file I/O. Return the input unchanged here.
-        input.clone()
+    /// Apply load file operation.
+    /// Takes ownership for consistency, though LoadFile operations are handled
+    /// specially in the main application since they need file I/O.
+    /// Returns the input unchanged here.
+    pub fn apply(&self, input: BitVec<u8, Msb0>) -> BitVec<u8, Msb0> {
+        input
     }
 }

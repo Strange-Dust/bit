@@ -234,12 +234,18 @@ impl Default for BitApp {
 }
 
 impl BitApp {
+    /// Get reference to the current worksheet.
+    /// Safely handles invalid indices by clamping to valid range.
     pub fn current_worksheet(&self) -> &Worksheet {
-        &self.worksheets[self.current_worksheet_index]
+        let index = self.current_worksheet_index.min(self.worksheets.len().saturating_sub(1));
+        &self.worksheets[index]
     }
-    
+
+    /// Get mutable reference to the current worksheet.
+    /// Safely handles invalid indices by clamping to valid range.
     pub fn current_worksheet_mut(&mut self) -> &mut Worksheet {
-        &mut self.worksheets[self.current_worksheet_index]
+        let index = self.current_worksheet_index.min(self.worksheets.len().saturating_sub(1));
+        &mut self.worksheets[index]
     }
     
     pub fn save_session(&self) {
@@ -347,8 +353,8 @@ impl BitApp {
                         }
                     }
                     _ => {
-                        // Regular operations are applied to result so far
-                        result = op.apply(&result);
+                        // Regular operations are applied to result so far (move semantics)
+                        result = op.apply(result);
                     }
                 }
             }
@@ -362,10 +368,16 @@ impl BitApp {
                 return;
             }
 
+            // Clone original bits once, then move through operations (no additional clones)
             let mut result = self.original_bits.clone();
-            
+
             for op in &self.operations {
-                result = op.apply(&result);
+                // Skip disabled operations
+                if !op.is_enabled() {
+                    continue;
+                }
+                // Move result through each operation - no clones!
+                result = op.apply(result);
             }
 
             self.processed_bits = result;
@@ -604,7 +616,7 @@ impl BitApp {
                                 total: total_ops,
                                 description: format!("Applying operation {}/{}", idx + 1, total_ops),
                             });
-                            result = op.apply(&result);
+                            result = op.apply(result);
                         }
                     }
                 }
@@ -619,12 +631,15 @@ impl BitApp {
                 let total_ops = operations.len();
                 
                 for (idx, op) in operations.iter().enumerate() {
+                    if !op.is_enabled() {
+                        continue;
+                    }
                     let _ = tx.send(OperationProgress::ProcessingOperation {
                         index: idx + 1,
                         total: total_ops,
                         description: format!("Applying operation {}/{}", idx + 1, total_ops),
                     });
-                    result = op.apply(&result);
+                    result = op.apply(result);
                 }
                 
                 Ok(result)
