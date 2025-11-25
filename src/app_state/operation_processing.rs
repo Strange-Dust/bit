@@ -47,11 +47,13 @@ pub struct ProcessingComplete {
 /// * `receiver` - Channel receiver for operation progress messages
 /// * `progress_message` - Human-readable status message describing current operation
 /// * `progress` - Processing progress as a value between 0.0 and 1.0
+/// * `start_time` - When the processing operation started
 #[derive(Default)]
 pub struct OperationProcessingState {
     pub receiver: Option<Receiver<OperationProgress>>,
     pub progress_message: String,
     pub progress: f32,
+    pub start_time: Option<std::time::Instant>,
 }
 
 impl OperationProcessingState {
@@ -79,6 +81,7 @@ impl OperationProcessingState {
         self.receiver = Some(receiver);
         self.progress = 0.0;
         self.progress_message = "Starting...".to_string();
+        self.start_time = Some(std::time::Instant::now());
     }
 
     /// Polls the operation processing for progress updates and completion.
@@ -131,6 +134,7 @@ impl OperationProcessingState {
         // Clear state if complete
         if processing_complete.is_some() {
             self.receiver = None;
+            self.start_time = None;
         }
 
         processing_complete
@@ -144,5 +148,45 @@ impl OperationProcessingState {
     /// * `false` if no processing operation is active
     pub fn is_processing(&self) -> bool {
         self.receiver.is_some()
+    }
+
+    /// Calculate estimated time remaining in seconds.
+    ///
+    /// Returns None if not enough progress has been made for a reliable estimate.
+    pub fn estimated_time_remaining(&self) -> Option<f64> {
+        if let Some(start_time) = self.start_time {
+            if self.progress > 0.01 {
+                // Only show ETA if we have at least 1% progress
+                let elapsed = start_time.elapsed().as_secs_f64();
+                let total_estimated = elapsed / self.progress as f64;
+                let remaining = total_estimated - elapsed;
+                Some(remaining.max(0.0))
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
+    /// Format estimated time remaining as a human-readable string.
+    pub fn eta_string(&self) -> String {
+        if let Some(remaining_secs) = self.estimated_time_remaining() {
+            if remaining_secs < 1.0 {
+                "< 1s".to_string()
+            } else if remaining_secs < 60.0 {
+                format!("{:.0}s", remaining_secs)
+            } else if remaining_secs < 3600.0 {
+                let mins = (remaining_secs / 60.0).floor();
+                let secs = (remaining_secs % 60.0).floor();
+                format!("{}m {}s", mins, secs)
+            } else {
+                let hours = (remaining_secs / 3600.0).floor();
+                let mins = ((remaining_secs % 3600.0) / 60.0).floor();
+                format!("{}h {}m", hours, mins)
+            }
+        } else {
+            "Calculating...".to_string()
+        }
     }
 }

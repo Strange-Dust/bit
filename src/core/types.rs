@@ -1,6 +1,7 @@
 // Core types used throughout the application
 
 use serde::{Deserialize, Serialize};
+use egui;
 
 /// View mode for switching between different bit visualizations
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -14,6 +15,14 @@ impl Default for ViewMode {
     fn default() -> Self {
         ViewMode::Bit
     }
+}
+
+/// Operation categories for visual grouping
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum OperationCategory {
+    Loading,
+    Transformation,
+    Analysis,
 }
 
 /// Available operation types that can be added
@@ -58,6 +67,36 @@ impl OperationType {
             OperationType::MultiWorksheetLoad => "Load bits from multiple worksheets with operations",
             OperationType::TruncateBits => "Keep bits in a range and discard the rest",
             OperationType::InterleaveBits => "Interleave/de-interleave bits for error resilience",
+        }
+    }
+
+    pub fn category(&self) -> OperationCategory {
+        match self {
+            OperationType::LoadFile => OperationCategory::Loading,
+            OperationType::MultiWorksheetLoad => OperationCategory::Loading,
+            OperationType::TakeSkipSequence => OperationCategory::Transformation,
+            OperationType::InvertBits => OperationCategory::Transformation,
+            OperationType::TruncateBits => OperationCategory::Transformation,
+            OperationType::InterleaveBits => OperationCategory::Transformation,
+        }
+    }
+}
+
+impl OperationCategory {
+    /// Returns the color for this category (RGB)
+    pub fn color(&self) -> egui::Color32 {
+        match self {
+            OperationCategory::Loading => egui::Color32::from_rgb(100, 150, 255),     // Blue
+            OperationCategory::Transformation => egui::Color32::from_rgb(150, 100, 255), // Purple
+            OperationCategory::Analysis => egui::Color32::from_rgb(100, 255, 150),    // Green
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        match self {
+            OperationCategory::Loading => "Loading",
+            OperationCategory::Transformation => "Transformation",
+            OperationCategory::Analysis => "Analysis",
         }
     }
 }

@@ -1,0 +1,21 @@
+[
+  {
+    "type": "LoadFile",
+    "name": "Load: Cargo.lock",
+    "file_path": "D:\\dev\\bit\\claude-bit\\bit\\test.bit",
+    "enabled": true
+  },
+  {
+    "type": "InterleaveBits",
+    "name": "Byte Swap",
+    "interleaver_type": "Block",
+    "block_config": {
+      "block_size": 8,
+      "depth": 2,
+      "direction": "Deinterleave"
+    },
+    "convolutional_config": null,
+    "symbol_config": null,
+    "enabled": true
+  }
+]

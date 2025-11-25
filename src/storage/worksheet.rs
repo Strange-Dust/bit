@@ -7,6 +7,8 @@ pub struct Worksheet {
     pub name: String,
     pub file_path: Option<PathBuf>,
     pub operations: Vec<BitOperation>,
+    #[serde(default)]
+    pub modified: bool,
 }
 
 impl Worksheet {
@@ -15,7 +17,20 @@ impl Worksheet {
             name,
             file_path: None,
             operations: Vec::new(),
+            modified: false,
         }
+    }
+
+    pub fn mark_modified(&mut self) {
+        self.modified = true;
+    }
+
+    pub fn mark_saved(&mut self) {
+        self.modified = false;
+    }
+
+    pub fn is_modified(&self) -> bool {
+        self.modified
     }
     
     pub fn save_to_file(&self, path: &PathBuf) -> Result<(), String> {

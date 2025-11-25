@@ -1,11 +1,1 @@
-{
-  "name": "Main sheet",
-  "file_path": "D:\\dev\\bit\\auto-framework\\bit\\README.md",
-  "operations": [
-    {
-      "InvertBits": {
-        "name": "Invert All Bits"
-      }
-    }
-  ]
-}
+{"name":"Worksheet 2","file_path":null,"operations":[]}

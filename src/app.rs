@@ -119,6 +119,85 @@ pub struct BitApp {
     pub frame_width_analysis: Option<FrameWidthAnalysis>,
     pub frame_width_sort_by_score: bool, // true = sort by score, false = sort by width
     pub frame_width_selected: Option<usize>, // Last clicked width
+
+    // Confirmation dialog state
+    pub show_confirmation_dialog: bool,
+    pub confirmation_message: String,
+    pub pending_confirmation: Option<PendingConfirmation>,
+
+    // Toast notifications for transient errors/messages
+    pub toasts: Vec<Toast>,
+
+    // Notification dialog (when using Dialog mode instead of Toast)
+    pub show_notification_dialog: bool,
+    pub notification_dialog_message: String,
+    pub notification_dialog_type: Option<ToastType>,
+
+    // Unsaved changes tracking
+    pub has_unsaved_changes: bool,
+    pub close_requested: bool,
+
+    // Template management state
+    pub show_save_template_dialog: bool,
+    pub template_name_buffer: String,
+
+    // Operations search/filter
+    pub operations_search_text: String,
+}
+
+/// Represents actions that require user confirmation
+#[derive(Debug, Clone)]
+pub enum PendingConfirmation {
+    DeleteWorksheet(usize),
+    DeleteOperation(usize),
+    ClearAllOperations,
+    OverwriteFile(PathBuf),
+    CloseApp,
+}
+
+/// Represents a temporary toast notification
+#[derive(Debug, Clone)]
+pub struct Toast {
+    pub message: String,
+    pub toast_type: ToastType,
+    pub created_at: std::time::Instant,
+    pub duration_secs: f32,
+}
+
+/// Types of toast notifications
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ToastType {
+    Info,
+    Success,
+    Warning,
+    Error,
+}
+
+impl Toast {
+    pub fn new(message: String, toast_type: ToastType, duration_secs: f32) -> Self {
+        Self {
+            message,
+            toast_type,
+            created_at: std::time::Instant::now(),
+            duration_secs,
+        }
+    }
+
+    pub fn is_expired(&self) -> bool {
+        self.created_at.elapsed().as_secs_f32() > self.duration_secs
+    }
+
+    pub fn opacity(&self) -> f32 {
+        let elapsed = self.created_at.elapsed().as_secs_f32();
+        let fade_duration = 0.5;
+
+        if elapsed < self.duration_secs - fade_duration {
+            1.0
+        } else {
+            let fade_progress = (self.duration_secs - elapsed) / fade_duration;
+            fade_progress.clamp(0.0, 1.0)
+        }
+    }
 }
 
 impl Default for BitApp {
@@ -208,6 +287,18 @@ impl Default for BitApp {
             frame_width_analysis: None,
             frame_width_sort_by_score: true, // Default to sorting by score
             frame_width_selected: None,
+            show_confirmation_dialog: false,
+            confirmation_message: String::new(),
+            pending_confirmation: None,
+            toasts: Vec::new(),
+            show_notification_dialog: false,
+            notification_dialog_message: String::new(),
+            notification_dialog_type: None,
+            has_unsaved_changes: false,
+            close_requested: false,
+            show_save_template_dialog: false,
+            template_name_buffer: String::new(),
+            operations_search_text: String::new(),
         }
     }
 }
@@ -387,9 +478,21 @@ impl BitApp {
                 Ok(bits) => {
                     self.original_bits = bits.clone();
                     self.processed_bits = bits;
-                    self.current_file_path = Some(complete.path);
+                    self.current_file_path = Some(complete.path.clone());
                     self.error_message = None;
                     self.clear_pattern_matches(); // New file loaded, clear old patterns
+
+                    // Show success notification
+                    let bit_count = self.original_bits.len();
+                    let byte_count = (bit_count + 7) / 8;
+                    let file_name = complete.path.file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("file");
+                    self.show_success(format!(
+                        "✓ Loaded \"{}\" - {} bits ({} bytes)",
+                        file_name, bit_count, byte_count
+                    ));
+
                     self.apply_operations();
 
                     // If we loaded a large file, defer the first render to show "preparing" message
@@ -438,7 +541,27 @@ impl BitApp {
 
         self.operation_processing_state.start(rx);
     }
-    
+
+    /// Load a file from the given path by creating a LoadFile operation
+    pub fn load_file_from_path(&mut self, path: PathBuf) {
+        // Add to recent files
+        self.settings.recent_files.add(path.clone());
+        self.settings.auto_save();
+
+        // Create LoadFile operation
+        let name = format!("Load: {}", path.file_name().unwrap_or_default().to_string_lossy());
+        let operation = BitOperation::LoadFile {
+            name,
+            file_path: path,
+            enabled: true,
+        };
+
+        // Add operation and apply
+        self.operations.push(operation);
+        self.mark_unsaved();
+        self.apply_operations();
+    }
+
     /// Process operations in background thread with progress reporting
     fn process_operations_async(
         operations: Vec<BitOperation>,
@@ -593,6 +716,14 @@ impl BitApp {
                     self.show_original = false;
                     self.error_message = None;
 
+                    // Show success notification
+                    let bit_count = self.processed_bits.len();
+                    let byte_count = (bit_count + 7) / 8;
+                    self.show_success(format!(
+                        "✓ Operations completed successfully! Processed {} bits ({} bytes)",
+                        bit_count, byte_count
+                    ));
+
                     // If we processed a large amount of data, defer the first render to show "preparing" message
                     if self.processed_bits.len() > 10_000_000 {
                         self.defer_first_render = true;
@@ -669,13 +800,22 @@ impl BitApp {
     
     pub fn save_worksheet_to_file(&mut self) {
         self.sync_to_worksheet();
-        
+
         if let Some(path) = rfd::FileDialog::new()
             .add_filter("Worksheet", &["json"])
             .save_file()
         {
-            if let Err(e) = self.current_worksheet().save_to_file(&path) {
-                self.error_message = Some(e);
+            match self.current_worksheet().save_to_file(&path) {
+                Ok(_) => {
+                    // Mark worksheet as saved after successful save
+                    if self.current_worksheet_index < self.worksheets.len() {
+                        self.worksheets[self.current_worksheet_index].mark_saved();
+                    }
+                    self.show_success(format!("Worksheet saved to: {}", path.display()));
+                }
+                Err(e) => {
+                    self.error_message = Some(e);
+                }
             }
         }
     }
@@ -701,23 +841,91 @@ impl BitApp {
     
     pub fn save_file(&mut self) {
         if let Some(path) = rfd::FileDialog::new().save_file() {
-            let bits_to_save = if self.show_original {
+            // Check if file already exists
+            if path.exists() {
+                self.request_confirmation(
+                    PendingConfirmation::OverwriteFile(path.clone()),
+                    format!("File \"{}\" already exists.\n\nDo you want to overwrite it?",
+                        path.file_name().unwrap_or_default().to_string_lossy())
+                );
+            } else {
+                // File doesn't exist, save directly
+                let bits_to_save = if self.show_original {
+                    &self.original_bits
+                } else {
+                    &self.processed_bits
+                };
+
+                match write_bits_to_file(&path, bits_to_save) {
+                    Ok(_) => {
+                        self.error_message = None;
+                        self.show_success(format!("File saved: {}", path.file_name().unwrap_or_default().to_string_lossy()));
+                        self.mark_saved();
+                    }
+                    Err(e) => {
+                        self.show_error(format!("Failed to save file: {}", e), true);
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn export_as_hex(&mut self) {
+        let dialog = rfd::FileDialog::new()
+            .add_filter("Text", &["txt"])
+            .set_file_name("export.txt");
+
+        if let Some(path) = dialog.save_file() {
+            let bits_to_export = if self.show_original {
                 &self.original_bits
             } else {
                 &self.processed_bits
             };
 
-            match write_bits_to_file(&path, bits_to_save) {
-                Ok(_) => {
-                    self.error_message = None;
-                }
-                Err(e) => {
-                    self.error_message = Some(format!("Failed to save file: {}", e));
-                }
+            let bytes = bits_to_export.clone().into_vec();
+            let hex_dump = bytes.chunks(16)
+                .enumerate()
+                .map(|(i, chunk)| {
+                    let hex: String = chunk.iter()
+                        .map(|b| format!("{:02x} ", b))
+                        .collect();
+                    let ascii: String = chunk.iter()
+                        .map(|&b| if (32..127).contains(&b) { b as char } else { '.' })
+                        .collect();
+                    format!("{:08x}  {:<48} {}", i * 16, hex, ascii)
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            match std::fs::write(&path, hex_dump) {
+                Ok(_) => self.show_success(format!("Hex dump exported to: {}", path.file_name().unwrap_or_default().to_string_lossy())),
+                Err(e) => self.show_error(format!("Failed to export hex dump: {}", e), true),
             }
         }
     }
-    
+
+    pub fn export_as_base64(&mut self) {
+        let dialog = rfd::FileDialog::new()
+            .add_filter("Text", &["txt"])
+            .set_file_name("export.txt");
+
+        if let Some(path) = dialog.save_file() {
+            let bits_to_export = if self.show_original {
+                &self.original_bits
+            } else {
+                &self.processed_bits
+            };
+
+            let bytes = bits_to_export.clone().into_vec();
+            use base64::Engine;
+            let base64_str = base64::engine::general_purpose::STANDARD.encode(&bytes);
+
+            match std::fs::write(&path, base64_str) {
+                Ok(_) => self.show_success(format!("Base64 exported to: {}", path.file_name().unwrap_or_default().to_string_lossy())),
+                Err(e) => self.show_error(format!("Failed to export Base64: {}", e), true),
+            }
+        }
+    }
     pub fn update_viewer(&mut self) {
         // Only update the bit viewer if we're in bit view mode
         // This prevents freezing when in Byte or ASCII view with large files
@@ -839,14 +1047,18 @@ impl BitApp {
                         self.error_message = Some("Please select a file to load".to_string());
                         return;
                     }
-                    
+
                     let file_path = self.loadfile_path.clone().unwrap();
                     let name = if self.loadfile_name.trim().is_empty() {
                         format!("Load: {}", file_path.file_name().unwrap_or_default().to_string_lossy())
                     } else {
                         self.loadfile_name.clone()
                     };
-                    
+
+                    // Add to recent files
+                    self.settings.recent_files.add(file_path.clone());
+                    self.settings.auto_save();
+
                     BitOperation::LoadFile {
                         name,
                         file_path,
@@ -1048,10 +1260,12 @@ impl BitApp {
                 // Editing existing operation - data will change
                 self.operations[index] = new_operation;
                 self.clear_pattern_matches();
+                self.mark_unsaved();
             } else {
                 // Adding new operation - data will change
                 self.operations.push(new_operation);
                 self.clear_pattern_matches();
+                self.mark_unsaved();
             }
 
             self.show_operation_menu = None;
@@ -1267,18 +1481,18 @@ impl BitApp {
     /// Run frame width analysis on the current bits
     pub fn run_frame_width_analysis(&mut self) {
         use crate::analysis::find_best_width;
-        
+
         let bits_to_analyze = if self.show_original {
             &self.original_bits
         } else {
             &self.processed_bits
         };
-        
+
         if bits_to_analyze.is_empty() {
             self.error_message = Some("No data to analyze".to_string());
             return;
         }
-        
+
         // Run analysis
         let analysis = find_best_width(
             bits_to_analyze,
@@ -1286,7 +1500,146 @@ impl BitApp {
             self.frame_width_max,
             self.frame_width_delta,
         );
-        
+
         self.frame_width_analysis = Some(analysis);
+    }
+
+    /// Request confirmation for a destructive action
+    pub fn request_confirmation(&mut self, action: PendingConfirmation, message: String) {
+        self.pending_confirmation = Some(action);
+        self.confirmation_message = message;
+        self.show_confirmation_dialog = true;
+    }
+
+    /// Execute a confirmed action
+    pub fn execute_confirmed_action(&mut self) {
+        if let Some(action) = self.pending_confirmation.take() {
+            match action {
+                PendingConfirmation::DeleteWorksheet(idx) => {
+                    self.worksheets.remove(idx);
+                    if self.current_worksheet_index >= self.worksheets.len() {
+                        self.current_worksheet_index = self.worksheets.len() - 1;
+                    }
+                    if self.current_worksheet_index == idx || idx < self.current_worksheet_index {
+                        self.load_from_worksheet();
+                    }
+                }
+                PendingConfirmation::DeleteOperation(idx) => {
+                    self.operations.remove(idx);
+                    self.clear_pattern_matches();
+                    self.apply_operations();
+                    self.mark_unsaved();
+                }
+                PendingConfirmation::ClearAllOperations => {
+                    self.operations.clear();
+                    self.clear_pattern_matches();
+                    self.processed_bits = self.original_bits.clone();
+                    self.update_viewer();
+                    self.mark_unsaved();
+                }
+                PendingConfirmation::OverwriteFile(path) => {
+                    let bits_to_save = if self.show_original {
+                        &self.original_bits
+                    } else {
+                        &self.processed_bits
+                    };
+
+                    match write_bits_to_file(&path, bits_to_save) {
+                        Ok(_) => {
+                            self.error_message = None;
+                            self.show_success(format!("File saved: {}", path.file_name().unwrap_or_default().to_string_lossy()));
+                            self.mark_saved();
+                        }
+                        Err(e) => {
+                            self.show_error(format!("Failed to save file: {}", e), true);
+                        }
+                    }
+                }
+                PendingConfirmation::CloseApp => {
+                    // User confirmed they want to close without saving
+                    self.close_requested = true;
+                }
+            }
+        }
+        self.show_confirmation_dialog = false;
+    }
+
+    /// Cancel a pending confirmation
+    pub fn cancel_confirmation(&mut self) {
+        self.pending_confirmation = None;
+        self.show_confirmation_dialog = false;
+        self.confirmation_message.clear();
+    }
+
+    /// Show a toast notification (respects notification_display_mode setting)
+    pub fn show_toast(&mut self, message: String, toast_type: ToastType) {
+        use crate::storage::NotificationDisplayMode;
+
+        match self.settings.notification_display_mode {
+            NotificationDisplayMode::Toast => {
+                let duration = match toast_type {
+                    ToastType::Info => 3.0,
+                    ToastType::Success => 2.5,
+                    ToastType::Warning => 4.0,
+                    ToastType::Error => 5.0,
+                };
+                self.toasts.push(Toast::new(message, toast_type, duration));
+            }
+            NotificationDisplayMode::Dialog => {
+                self.notification_dialog_message = message;
+                self.notification_dialog_type = Some(toast_type);
+                self.show_notification_dialog = true;
+            }
+            NotificationDisplayMode::None => {
+                // Don't show notification
+            }
+        }
+    }
+
+    /// Remove expired toasts
+    pub fn clean_expired_toasts(&mut self) {
+        self.toasts.retain(|toast| !toast.is_expired());
+    }
+
+    /// Show an error message (either as toast for transient errors or modal for critical)
+    pub fn show_error(&mut self, message: String, is_critical: bool) {
+        if is_critical {
+            self.error_message = Some(message);
+        } else {
+            self.show_toast(message, ToastType::Error);
+        }
+    }
+
+    /// Show a success message as a toast
+    pub fn show_success(&mut self, message: String) {
+        self.show_toast(message, ToastType::Success);
+    }
+
+    /// Show an info message as a toast
+    pub fn show_info(&mut self, message: String) {
+        self.show_toast(message, ToastType::Info);
+    }
+
+    /// Show a warning message as a toast
+    pub fn show_warning(&mut self, message: String) {
+        self.show_toast(message, ToastType::Warning);
+    }
+
+    /// Mark that there are unsaved changes
+    pub fn mark_unsaved(&mut self) {
+        self.has_unsaved_changes = true;
+        // Also mark the current worksheet as modified
+        if self.current_worksheet_index < self.worksheets.len() {
+            self.worksheets[self.current_worksheet_index].mark_modified();
+        }
+    }
+
+    /// Mark that all changes are saved
+    pub fn mark_saved(&mut self) {
+        self.has_unsaved_changes = false;
+        // Also mark the current worksheet as saved
+        if self.current_worksheet_index < self.worksheets.len() {
+            self.worksheets[self.current_worksheet_index].mark_saved();
+        }
     }
 }

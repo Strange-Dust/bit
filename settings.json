@@ -1,10 +1,1 @@
-{
-  "bit_shape": "Square",
-  "show_grid": true,
-  "thick_grid_interval_horizontal": 8,
-  "thick_grid_interval_vertical": 8,
-  "thick_grid_spacing_horizontal": 10.0,
-  "thick_grid_spacing_vertical": 10.0,
-  "font_size": 14.0,
-  "frame_length": 64
-}
+{"bit_shape":"Square","show_grid":true,"thick_grid_interval_horizontal":8,"thick_grid_interval_vertical":8,"thick_grid_spacing_horizontal":10.0,"thick_grid_spacing_vertical":10.0,"font_size":16.5,"frame_length":90,"notification_display_mode":"Toast","template_library":{"templates":[{"template_name":"Manchester Decode (Take Every Other)","operation":{"type":"TakeSkipSequence","name":"Manchester Decode","sequence":{"operations":[{"Take":1},{"Skip":1}]},"enabled":true}},{"template_name":"Byte Swap (16-bit words)","operation":{"type":"InterleaveBits","name":"Byte Swap","interleaver_type":"Block","block_config":{"block_size":8,"depth":2,"direction":"Deinterleave"},"convolutional_config":null,"symbol_config":null,"enabled":true}},{"template_name":"Invert All Bits","operation":{"type":"InvertBits","name":"Invert All","enabled":true}}]},"recent_files":{"files":[],"max_entries":0},"available_operations_panel_width":361.96875,"active_operations_panel_width":300.0}

@@ -264,24 +264,52 @@ fn render_takeskip_editor(app: &mut BitApp, ui: &mut egui::Ui) {
     
     ui.add_space(8.0);
     
+    // Validate the sequence in real-time
+    let validation_result = if app.takeskip_input.is_empty() {
+        Err("Sequence cannot be empty".to_string())
+    } else {
+        use crate::operations::base::OperationSequence;
+        OperationSequence::from_string(&app.takeskip_input)
+            .map(|_| ())
+    };
+    let is_valid = validation_result.is_ok();
+
     ui.horizontal(|ui| {
         ui.label("Sequence:");
-        let response = ui.text_edit_singleline(&mut app.takeskip_input);
-        
-        if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+        let mut text_edit = egui::TextEdit::singleline(&mut app.takeskip_input);
+
+        // Add red border if invalid
+        if !is_valid {
+            text_edit = text_edit.text_color(egui::Color32::from_rgb(255, 100, 100));
+        }
+
+        let response = ui.add(text_edit);
+
+        if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) && is_valid {
             app.save_current_operation();
         }
     });
-    
-    ui.label("Example: t4r3i8s1");
-    
+
+    // Show validation error with helpful message
+    if let Err(err) = validation_result {
+        ui.colored_label(egui::Color32::from_rgb(255, 100, 100), format!("⚠ {}", err));
+        ui.colored_label(egui::Color32::from_rgb(200, 200, 200), "Valid operations: t (take), s (skip), r (reverse), i (invert)");
+    } else {
+        ui.label("Example: t4r3i8s1");
+    }
+
     ui.add_space(8.0);
-    
+
     ui.horizontal(|ui| {
-        if ui.button("✓ Save").clicked() {
+        // Disable Save button if input is invalid
+        let save_button = egui::Button::new("✓ Save");
+        if ui.add_enabled(is_valid, save_button)
+            .on_hover_text(if is_valid { "Save operation" } else { "Fix validation errors first" })
+            .clicked()
+        {
             app.save_current_operation();
         }
-        
+
         if ui.button("✗ Cancel").clicked() {
             app.cancel_operation_edit();
         }
@@ -329,11 +357,46 @@ fn render_truncate_editor(app: &mut BitApp, ui: &mut egui::Ui) {
     
     ui.label("Specify the range of bits to keep:");
     ui.add_space(4.0);
-    
+
+    // Validate start field
+    let start_valid = !app.truncate_start.is_empty() && eval_expression(&app.truncate_start).is_ok();
+    let start_value = eval_expression(&app.truncate_start).ok();
+
+    // Validate end field (can be empty)
+    let end_valid = app.truncate_end.is_empty() || eval_expression(&app.truncate_end).is_ok();
+    let end_value = if app.truncate_end.is_empty() {
+        None
+    } else {
+        eval_expression(&app.truncate_end).ok()
+    };
+
+    // Check range validity
+    let mut validation_message = None;
+    let is_valid = if !start_valid {
+        validation_message = Some("Start must be a valid number or expression");
+        false
+    } else if !end_valid {
+        validation_message = Some("End must be a valid number or expression (or empty)");
+        false
+    } else if let (Some(start), Some(end)) = (start_value, end_value) {
+        if end <= start {
+            validation_message = Some("End must be greater than start");
+            false
+        } else {
+            true
+        }
+    } else {
+        true
+    };
+
     ui.horizontal(|ui| {
         ui.label("Start (inclusive):");
-        let start_response = ui.text_edit_singleline(&mut app.truncate_start);
-        
+        let mut start_edit = egui::TextEdit::singleline(&mut app.truncate_start);
+        if !start_valid {
+            start_edit = start_edit.text_color(egui::Color32::from_rgb(255, 100, 100));
+        }
+        let start_response = ui.add(start_edit);
+
         // Evaluate math expression on Enter key
         if start_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
             if let Ok(result) = eval_expression(&app.truncate_start) {
@@ -341,11 +404,15 @@ fn render_truncate_editor(app: &mut BitApp, ui: &mut egui::Ui) {
             }
         }
     });
-    
+
     ui.horizontal(|ui| {
         ui.label("End (exclusive):  ");
-        let end_response = ui.text_edit_singleline(&mut app.truncate_end);
-        
+        let mut end_edit = egui::TextEdit::singleline(&mut app.truncate_end);
+        if !end_valid {
+            end_edit = end_edit.text_color(egui::Color32::from_rgb(255, 100, 100));
+        }
+        let end_response = ui.add(end_edit);
+
         // Evaluate math expression on Enter key
         if end_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
             if !app.truncate_end.is_empty() {
@@ -355,22 +422,32 @@ fn render_truncate_editor(app: &mut BitApp, ui: &mut egui::Ui) {
             }
         }
     });
-    
+
     ui.add_space(4.0);
+
+    // Show validation error if any
+    if let Some(msg) = validation_message {
+        ui.colored_label(egui::Color32::from_rgb(255, 100, 100), format!("⚠ {}", msg));
+    }
+
     ui.label("💡 Tips:");
     ui.label("• Leave end empty to keep until the end");
     ui.label("• You can use math: 8*8, 100+50, 200-10, 64/2");
     ui.label("• Example: Start=0, End=250 keeps bits 0-249");
     ui.label("• Example: Start=100, End=250 keeps bits 100-249");
     ui.label("• Example: Start=0, End=empty keeps all bits from 0");
-    
+
     ui.add_space(8.0);
-    
+
     ui.horizontal(|ui| {
-        if ui.button("✓ Save").clicked() {
+        let save_button = egui::Button::new("✓ Save");
+        if ui.add_enabled(is_valid, save_button)
+            .on_hover_text(if is_valid { "Save operation" } else { "Fix validation errors first" })
+            .clicked()
+        {
             app.save_current_operation();
         }
-        
+
         if ui.button("✗ Cancel").clicked() {
             app.cancel_operation_edit();
         }

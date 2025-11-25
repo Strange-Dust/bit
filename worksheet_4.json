@@ -1,0 +1,1 @@
+{"name":"Worksheet 4","file_path":null,"operations":[{"type":"LoadFile","name":"Load: Cargo.lock","file_path":"D:\\dev\\bit\\claude-bit\\bit\\Cargo.lock","enabled":true},{"type":"InvertBits","name":"Invert All Bits","enabled":true}]}
