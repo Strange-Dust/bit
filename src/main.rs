@@ -9,7 +9,8 @@ mod utils;
 mod viewers;
 
 use crate::app::BitApp;
-use crate::core::{ViewMode, OperationType};
+use crate::core::ViewMode;
+use crate::operations::OperationType;
 use crate::storage::AppSession;
 use eframe::egui;
 

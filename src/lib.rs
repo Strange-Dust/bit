@@ -12,7 +12,7 @@ pub mod viewers;
 // Re-export commonly used items for convenience
 pub use analysis::{Pattern, PatternFormat};
 pub use app::BitApp;
-pub use core::{OperationType, ViewMode};
-pub use operations::{BitOperation, OperationSequence, WorksheetOperation};
+pub use core::ViewMode;
+pub use operations::{BitOperation, OperationCategory, OperationSequence, OperationType, WorksheetOperation};
 pub use storage::{read_file_as_bits, write_bits_to_file, AppSession, AppSettings, Worksheet};
 pub use viewers::{BitShape, BitViewer, ByteColumn, ByteViewer};

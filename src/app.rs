@@ -2,8 +2,8 @@
 
 use crate::analysis::{Pattern, PatternFormat, FrameWidthAnalysis};
 use crate::app_state::{LoadingState, OperationProcessingState};
-use crate::core::{ViewMode, OperationType};
-use crate::operations::{BitOperation, OperationSequence, WorksheetOperation};
+use crate::core::ViewMode;
+use crate::operations::{BitOperation, OperationEditorState, OperationType};
 use crate::storage::{read_file_as_bits, read_file_as_bits_with_progress, write_bits_to_file, AppSession, AppSettings, Worksheet, LoadProgress};
 use crate::viewers::{BitViewer, ByteViewer};
 use bitvec::prelude::*;
@@ -42,44 +42,10 @@ pub struct BitApp {
     // Operation creation/editing state
     pub show_operation_menu: Option<OperationType>,
     pub editing_operation_index: Option<usize>,
-    
+    pub editor_state: Option<OperationEditorState>,
+
     // Drag and drop state
     pub dragging_operation: Option<usize>,
-    
-    // Take/Skip Sequence editor state
-    pub takeskip_name: String,
-    pub takeskip_input: String,
-    
-    // Load File editor state
-    pub loadfile_name: String,
-    pub loadfile_path: Option<PathBuf>,
-    
-    // Invert Bits editor state
-    pub invert_name: String,
-    
-    // Truncate Bits editor state
-    pub truncate_name: String,
-    pub truncate_start: String,
-    pub truncate_end: String,
-    
-    // Interleave Bits editor state
-    pub interleave_name: String,
-    pub interleave_type: crate::operations::InterleaverType,
-    pub interleave_direction: crate::operations::InterleaverDirection,
-    // Block interleaver params
-    pub interleave_block_size: String,
-    pub interleave_depth: String,
-    // Convolutional interleaver params
-    pub interleave_branches: String,
-    pub interleave_delay_increment: String,
-    // Symbol interleaver params
-    pub interleave_symbol_size: String,
-    
-    // Multi-Worksheet Load editor state
-    pub multiworksheet_name: String,
-    pub multiworksheet_ops: Vec<(usize, String)>, // (worksheet_index, sequence_string)
-    pub multiworksheet_input: String, // Temporary input for adding new worksheet operations
-    pub multiworksheet_selected_worksheet: usize,
     
     // Pattern Locator state
     pub patterns: Vec<Pattern>,
@@ -241,27 +207,8 @@ impl Default for BitApp {
             worksheet_name_buffer: String::new(),
             show_operation_menu: None,
             editing_operation_index: None,
+            editor_state: None,
             dragging_operation: None,
-            takeskip_name: String::new(),
-            takeskip_input: String::new(),
-            loadfile_name: String::new(),
-            loadfile_path: None,
-            invert_name: String::new(),
-            truncate_name: String::new(),
-            truncate_start: String::from("0"),
-            truncate_end: String::new(),
-            interleave_name: String::new(),
-            interleave_type: crate::operations::InterleaverType::Block,
-            interleave_direction: crate::operations::InterleaverDirection::Interleave,
-            interleave_block_size: String::from("8"),
-            interleave_depth: String::from("4"),
-            interleave_branches: String::from("4"),
-            interleave_delay_increment: String::from("1"),
-            interleave_symbol_size: String::from("8"),
-            multiworksheet_name: String::new(),
-            multiworksheet_ops: Vec::new(),
-            multiworksheet_input: String::new(),
-            multiworksheet_selected_worksheet: 0,
             patterns: Vec::new(),
             show_pattern_locator: false,
             pattern_name_input: String::new(),
@@ -945,369 +892,62 @@ impl BitApp {
     pub fn open_operation_creator(&mut self, op_type: OperationType) {
         self.show_operation_menu = Some(op_type);
         self.editing_operation_index = None;
-        
-        // Reset input fields
-        self.takeskip_name.clear();
-        self.takeskip_input.clear();
-        self.loadfile_name.clear();
-        self.loadfile_path = None;
-        self.invert_name.clear();
-        self.truncate_name.clear();
-        self.truncate_start = String::from("0");
-        self.truncate_end.clear();
-        self.interleave_name.clear();
-        self.interleave_type = crate::operations::InterleaverType::Block;
-        self.interleave_direction = crate::operations::InterleaverDirection::Interleave;
-        self.interleave_block_size = String::from("8");
-        self.interleave_depth = String::from("4");
-        self.interleave_branches = String::from("4");
-        self.interleave_delay_increment = String::from("1");
-        self.interleave_symbol_size = String::from("8");
-        self.multiworksheet_name.clear();
-        self.multiworksheet_ops.clear();
-        self.multiworksheet_input.clear();
+        self.editor_state = Some(OperationEditorState::new_for_type(op_type));
     }
 
     pub fn open_operation_editor(&mut self, index: usize) {
         if let Some(op) = self.operations.get(index) {
-            match op {
-                BitOperation::LoadFile { name, file_path, .. } => {
-                    self.show_operation_menu = Some(OperationType::LoadFile);
-                    self.editing_operation_index = Some(index);
-                    self.loadfile_name = name.clone();
-                    self.loadfile_path = Some(file_path.clone());
-                }
-                BitOperation::TakeSkipSequence { name, sequence, .. } => {
-                    self.show_operation_menu = Some(OperationType::TakeSkipSequence);
-                    self.editing_operation_index = Some(index);
-                    self.takeskip_name = name.clone();
-                    self.takeskip_input = sequence.to_string();
-                }
-                BitOperation::InvertBits { name, .. } => {
-                    self.show_operation_menu = Some(OperationType::InvertBits);
-                    self.editing_operation_index = Some(index);
-                    self.invert_name = name.clone();
-                }
-                BitOperation::TruncateBits { name, start, end, .. } => {
-                    self.show_operation_menu = Some(OperationType::TruncateBits);
-                    self.editing_operation_index = Some(index);
-                    self.truncate_name = name.clone();
-                    self.truncate_start = start.to_string();
-                    self.truncate_end = end.to_string();
-                }
-                BitOperation::InterleaveBits { name, interleaver_type, block_config, convolutional_config, symbol_config, .. } => {
-                    self.show_operation_menu = Some(OperationType::InterleaveBits);
-                    self.editing_operation_index = Some(index);
-                    self.interleave_name = name.clone();
-                    self.interleave_type = *interleaver_type;
-                    
-                    match interleaver_type {
-                        crate::operations::InterleaverType::Block => {
-                            if let Some(cfg) = block_config {
-                                self.interleave_direction = cfg.direction;
-                                self.interleave_block_size = cfg.block_size.to_string();
-                                self.interleave_depth = cfg.depth.to_string();
-                            }
-                        }
-                        crate::operations::InterleaverType::Convolutional => {
-                            if let Some(cfg) = convolutional_config {
-                                self.interleave_direction = cfg.direction;
-                                self.interleave_branches = cfg.branches.to_string();
-                                self.interleave_delay_increment = cfg.delay_increment.to_string();
-                            }
-                        }
-                        crate::operations::InterleaverType::Symbol => {
-                            if let Some(cfg) = symbol_config {
-                                self.interleave_direction = cfg.direction;
-                                self.interleave_symbol_size = cfg.symbol_size.to_string();
-                                self.interleave_block_size = cfg.block_size.to_string();
-                                self.interleave_depth = cfg.depth.to_string();
-                            }
-                        }
-                    }
-                }
-                BitOperation::MultiWorksheetLoad { name, worksheet_operations, .. } => {
-                    self.show_operation_menu = Some(OperationType::MultiWorksheetLoad);
-                    self.editing_operation_index = Some(index);
-                    self.multiworksheet_name = name.clone();
-                    self.multiworksheet_ops = worksheet_operations
-                        .iter()
-                        .map(|wo| (wo.worksheet_index, wo.sequence.to_string()))
-                        .collect();
-                }
-            }
+            self.show_operation_menu = Some(op.operation_type());
+            self.editing_operation_index = Some(index);
+            self.editor_state = Some(OperationEditorState::from_operation(op));
         }
     }
 
     pub fn save_current_operation(&mut self) {
-        if let Some(op_type) = self.show_operation_menu {
-            let new_operation = match op_type {
-                OperationType::LoadFile => {
-                    if self.loadfile_path.is_none() {
-                        self.error_message = Some("Please select a file to load".to_string());
-                        return;
-                    }
+        let Some(op_type) = self.show_operation_menu else {
+            return;
+        };
 
-                    let file_path = self.loadfile_path.clone().unwrap();
-                    let name = if self.loadfile_name.trim().is_empty() {
-                        format!("Load: {}", file_path.file_name().unwrap_or_default().to_string_lossy())
-                    } else {
-                        self.loadfile_name.clone()
-                    };
+        let Some(ref editor_state) = self.editor_state else {
+            return;
+        };
 
-                    // Add to recent files
-                    self.settings.recent_files.add(file_path.clone());
-                    self.settings.auto_save();
-
-                    BitOperation::LoadFile {
-                        name,
-                        file_path,
-                        enabled: true,
-                    }
-                }
-                OperationType::TakeSkipSequence => {
-                    if self.takeskip_input.is_empty() {
-                        self.error_message = Some("Operation sequence cannot be empty".to_string());
-                        return;
-                    }
-                    
-                    match OperationSequence::from_string(&self.takeskip_input) {
-                        Ok(seq) => {
-                            let name = if self.takeskip_name.trim().is_empty() {
-                                format!("Sequence: {}", self.takeskip_input)
-                            } else {
-                                self.takeskip_name.clone()
-                            };
-                            
-                            BitOperation::TakeSkipSequence {
-                                name,
-                                sequence: seq,
-                                enabled: true,
-                            }
-                        }
-                        Err(e) => {
-                            self.error_message = Some(format!("Invalid operation: {}", e));
-                            return;
-                        }
-                    }
-                }
-                OperationType::InvertBits => {
-                    let name = if self.invert_name.trim().is_empty() {
-                        "Invert All Bits".to_string()
-                    } else {
-                        self.invert_name.clone()
-                    };
-                    
-                    BitOperation::InvertBits { name, enabled: true }
-                }
-                OperationType::TruncateBits => {
-                    // Parse start and end
-                    let start = self.truncate_start.trim().parse::<usize>().unwrap_or(0);
-                    let end = if self.truncate_end.trim().is_empty() {
-                        // If no end specified, use a very large number (essentially to the end)
-                        usize::MAX
-                    } else {
-                        match self.truncate_end.trim().parse::<usize>() {
-                            Ok(val) => val,
-                            Err(_) => {
-                                self.error_message = Some("Invalid end value".to_string());
-                                return;
-                            }
-                        }
-                    };
-                    
-                    if start >= end {
-                        self.error_message = Some("Start must be less than end".to_string());
-                        return;
-                    }
-                    
-                    let name = if self.truncate_name.trim().is_empty() {
-                        format!("Truncate: {}-{}", start, if end == usize::MAX { "end".to_string() } else { end.to_string() })
-                    } else {
-                        self.truncate_name.clone()
-                    };
-                    
-                    BitOperation::TruncateBits { name, start, end, enabled: true }
-                }
-                OperationType::InterleaveBits => {
-                    use crate::operations::{BlockInterleaverConfig, ConvolutionalInterleaverConfig, InterleaverType};
-                    use crate::operations::interleaver::SymbolInterleaverConfig;
-                    
-                    let name = if self.interleave_name.trim().is_empty() {
-                        match self.interleave_type {
-                            InterleaverType::Block => "Block Interleaver".to_string(),
-                            InterleaverType::Convolutional => "Convolutional Interleaver".to_string(),
-                            InterleaverType::Symbol => "Symbol Interleaver".to_string(),
-                        }
-                    } else {
-                        self.interleave_name.clone()
-                    };
-                    
-                    let (block_config, convolutional_config, symbol_config) = match self.interleave_type {
-                        InterleaverType::Block => {
-                            let block_size = match self.interleave_block_size.trim().parse::<usize>() {
-                                Ok(val) if val > 0 => val,
-                                _ => {
-                                    self.error_message = Some("Block size must be a positive number".to_string());
-                                    return;
-                                }
-                            };
-                            
-                            let depth = match self.interleave_depth.trim().parse::<usize>() {
-                                Ok(val) if val > 0 => val,
-                                _ => {
-                                    self.error_message = Some("Depth must be a positive number".to_string());
-                                    return;
-                                }
-                            };
-                            
-                            (Some(BlockInterleaverConfig::new(block_size, depth, self.interleave_direction)), None, None)
-                        }
-                        InterleaverType::Convolutional => {
-                            let branches = match self.interleave_branches.trim().parse::<usize>() {
-                                Ok(val) if val > 0 => val,
-                                _ => {
-                                    self.error_message = Some("Branches must be a positive number".to_string());
-                                    return;
-                                }
-                            };
-                            
-                            let delay_increment = match self.interleave_delay_increment.trim().parse::<usize>() {
-                                Ok(val) => val,
-                                _ => {
-                                    self.error_message = Some("Delay increment must be a valid number".to_string());
-                                    return;
-                                }
-                            };
-                            
-                            (None, Some(ConvolutionalInterleaverConfig::new(branches, delay_increment, self.interleave_direction)), None)
-                        }
-                        InterleaverType::Symbol => {
-                            let symbol_size = match self.interleave_symbol_size.trim().parse::<usize>() {
-                                Ok(val) if val > 0 => val,
-                                _ => {
-                                    self.error_message = Some("Symbol size must be a positive number".to_string());
-                                    return;
-                                }
-                            };
-                            
-                            let block_size = match self.interleave_block_size.trim().parse::<usize>() {
-                                Ok(val) if val > 0 => val,
-                                _ => {
-                                    self.error_message = Some("Block size must be a positive number".to_string());
-                                    return;
-                                }
-                            };
-                            
-                            let depth = match self.interleave_depth.trim().parse::<usize>() {
-                                Ok(val) if val > 0 => val,
-                                _ => {
-                                    self.error_message = Some("Depth must be a positive number".to_string());
-                                    return;
-                                }
-                            };
-                            
-                            (None, None, Some(SymbolInterleaverConfig::new(symbol_size, block_size, depth, self.interleave_direction)))
-                        }
-                    };
-                    
-                    BitOperation::InterleaveBits {
-                        name,
-                        interleaver_type: self.interleave_type,
-                        block_config,
-                        convolutional_config,
-                        symbol_config,
-                        enabled: true,
-                    }
-                }
-                OperationType::MultiWorksheetLoad => {
-                    if self.multiworksheet_ops.is_empty() {
-                        self.error_message = Some("Must add at least one worksheet operation".to_string());
-                        return;
-                    }
-                    
-                    let mut worksheet_operations = Vec::new();
-                    for (ws_idx, seq_str) in &self.multiworksheet_ops {
-                        match OperationSequence::from_string(seq_str) {
-                            Ok(seq) => {
-                                worksheet_operations.push(WorksheetOperation {
-                                    worksheet_index: *ws_idx,
-                                    sequence: seq,
-                                });
-                            }
-                            Err(e) => {
-                                self.error_message = Some(format!("Invalid sequence for worksheet {}: {}", ws_idx + 1, e));
-                                return;
-                            }
-                        }
-                    }
-                    
-                    let name = if self.multiworksheet_name.trim().is_empty() {
-                        format!("Load from {} worksheets", worksheet_operations.len())
-                    } else {
-                        self.multiworksheet_name.clone()
-                    };
-                    
-                    BitOperation::MultiWorksheetLoad {
-                        name,
-                        worksheet_operations,
-                        enabled: true,
-                    }
-                }
-            };
-
-            if let Some(index) = self.editing_operation_index {
-                // Editing existing operation - data will change
-                self.operations[index] = new_operation;
-                self.clear_pattern_matches();
-                self.mark_unsaved();
-            } else {
-                // Adding new operation - data will change
-                self.operations.push(new_operation);
-                self.clear_pattern_matches();
-                self.mark_unsaved();
+        // Try to build the operation from editor state
+        let new_operation = match editor_state.try_build_operation(op_type) {
+            Ok(op) => op,
+            Err(e) => {
+                self.error_message = Some(e);
+                return;
             }
+        };
 
-            self.show_operation_menu = None;
-            self.editing_operation_index = None;
-            self.takeskip_name.clear();
-            self.takeskip_input.clear();
-            self.loadfile_name.clear();
-            self.loadfile_path = None;
-            self.invert_name.clear();
-            self.truncate_name.clear();
-            self.truncate_start = String::from("0");
-            self.truncate_end.clear();
-            self.multiworksheet_name.clear();
-            self.multiworksheet_ops.clear();
-            self.multiworksheet_input.clear();
-            self.error_message = None;
-            self.apply_operations();
+        // For LoadFile operations, add to recent files
+        if let BitOperation::LoadFile { ref file_path, .. } = new_operation {
+            self.settings.recent_files.add(file_path.clone());
+            self.settings.auto_save();
         }
+
+        if let Some(index) = self.editing_operation_index {
+            // Editing existing operation
+            self.operations[index] = new_operation;
+        } else {
+            // Adding new operation
+            self.operations.push(new_operation);
+        }
+
+        self.clear_pattern_matches();
+        self.mark_unsaved();
+        self.show_operation_menu = None;
+        self.editing_operation_index = None;
+        self.editor_state = None;
+        self.error_message = None;
+        self.apply_operations();
     }
 
     pub fn cancel_operation_edit(&mut self) {
         self.show_operation_menu = None;
         self.editing_operation_index = None;
-        self.takeskip_name.clear();
-        self.takeskip_input.clear();
-        self.loadfile_name.clear();
-        self.loadfile_path = None;
-        self.invert_name.clear();
-        self.truncate_name.clear();
-        self.truncate_start = String::from("0");
-        self.truncate_end.clear();
-        self.interleave_name.clear();
-        self.interleave_type = crate::operations::InterleaverType::Block;
-        self.interleave_direction = crate::operations::InterleaverDirection::Interleave;
-        self.interleave_block_size = String::from("8");
-        self.interleave_depth = String::from("4");
-        self.interleave_branches = String::from("4");
-        self.interleave_delay_increment = String::from("1");
-        self.interleave_symbol_size = String::from("8");
-        self.multiworksheet_name.clear();
-        self.multiworksheet_ops.clear();
-        self.multiworksheet_input.clear();
+        self.editor_state = None;
     }
     
     pub fn render_ascii_view(&self, ui: &mut eframe::egui::Ui, bits: &BitVec<u8, Msb0>) {
