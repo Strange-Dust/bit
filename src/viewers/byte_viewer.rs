@@ -229,7 +229,7 @@ impl ByteViewer {
                                         
                                         if let Some((_, pattern_name)) = pattern_match {
                                             ui.separator();
-                                            ui.label(format!("🎯 Pattern: {}", pattern_name));
+                                            ui.label(format!("Pattern: {}", pattern_name));
                                         }
                                     });
                                 }

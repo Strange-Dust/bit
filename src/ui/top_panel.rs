@@ -7,7 +7,7 @@ use eframe::egui;
 pub fn render(app: &mut BitApp, ctx: &egui::Context) {
     egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
         ui.horizontal(|ui| {
-            ui.heading("🔧 B.I.T. - Bit Information Tool");
+            ui.heading("B.I.T. - Bit Information Tool");
 
             // Show mini progress indicator when loading or processing
             if app.is_loading() {
@@ -32,8 +32,8 @@ pub fn render(app: &mut BitApp, ctx: &egui::Context) {
             ui.separator();
 
             // Recent files dropdown
-            ui.menu_button("📂 File", |ui| {
-                if ui.button("💾 Save File")
+            ui.menu_button("File", |ui| {
+                if ui.button("Save File")
                     .on_hover_text("Save processed file (Ctrl+S)")
                     .clicked()
                 {
@@ -44,7 +44,7 @@ pub fn render(app: &mut BitApp, ctx: &egui::Context) {
                 ui.separator();
                 ui.label("Export Data:");
 
-                if ui.button("📤 Export as Hex Dump")
+                if ui.button("Export as Hex Dump")
                     .on_hover_text("Export processed data as hexadecimal text")
                     .clicked()
                 {
@@ -52,7 +52,7 @@ pub fn render(app: &mut BitApp, ctx: &egui::Context) {
                     ui.close();
                 }
 
-                if ui.button("📤 Export as Base64")
+                if ui.button("Export as Base64")
                     .on_hover_text("Export processed data as Base64 encoded text")
                     .clicked()
                 {
@@ -83,7 +83,7 @@ pub fn render(app: &mut BitApp, ctx: &egui::Context) {
                                 to_open = Some(idx);
                             }
 
-                            if ui.small_button("❌")
+                            if ui.small_button("x")
                                 .on_hover_text("Remove from recent files")
                                 .clicked()
                             {
@@ -105,7 +105,7 @@ pub fn render(app: &mut BitApp, ctx: &egui::Context) {
                     }
 
                     ui.separator();
-                    if ui.button("🗑 Clear Recent Files")
+                    if ui.button("Clear Recent Files")
                         .on_hover_text("Remove all files from recent files list")
                         .clicked()
                     {
@@ -118,21 +118,21 @@ pub fn render(app: &mut BitApp, ctx: &egui::Context) {
 
             ui.separator();
 
-            if ui.button("⚙ Settings")
+            if ui.button("Settings")
                 .on_hover_text("Open settings panel (Ctrl+,)\nConfigure visualization, grid, and notification preferences")
                 .clicked()
             {
                 app.show_settings = !app.show_settings;
             }
 
-            if ui.button("🔍 Pattern Locator")
+            if ui.button("Pattern Locator")
                 .on_hover_text("Open pattern locator (Ctrl+F)\nSearch for bit patterns in your data")
                 .clicked()
             {
                 app.show_pattern_locator = !app.show_pattern_locator;
             }
 
-            if ui.button("📏 Frame Width Finder")
+            if ui.button("Frame Width Finder")
                 .on_hover_text("Open frame width finder\nAnalyze optimal frame width for structured data")
                 .clicked()
             {
@@ -143,19 +143,19 @@ pub fn render(app: &mut BitApp, ctx: &egui::Context) {
 
             // View mode toggle
             ui.label("View:");
-            if ui.selectable_label(app.view_mode == ViewMode::Bit, "⬛ Bit")
+            if ui.selectable_label(app.view_mode == ViewMode::Bit, "Bit")
                 .on_hover_text("View data as individual bits (Press 1)")
                 .clicked()
             {
                 app.view_mode = ViewMode::Bit;
             }
-            if ui.selectable_label(app.view_mode == ViewMode::Byte, "📊 Byte")
+            if ui.selectable_label(app.view_mode == ViewMode::Byte, "Byte")
                 .on_hover_text("View data as bytes in hexadecimal (Press 2)")
                 .clicked()
             {
                 app.view_mode = ViewMode::Byte;
             }
-            if ui.selectable_label(app.view_mode == ViewMode::Ascii, "🔤 ASCII")
+            if ui.selectable_label(app.view_mode == ViewMode::Ascii, "ASCII")
                 .on_hover_text("View data as ASCII characters (Press 3)")
                 .clicked()
             {
@@ -165,19 +165,19 @@ pub fn render(app: &mut BitApp, ctx: &egui::Context) {
             ui.separator();
 
             ui.label("Zoom:");
-            if ui.button("➕")
+            if ui.button("+")
                 .on_hover_text("Zoom in (Ctrl++)")
                 .clicked()
             {
                 app.viewer.zoom_in();
             }
-            if ui.button("➖")
+            if ui.button("-")
                 .on_hover_text("Zoom out (Ctrl+-)")
                 .clicked()
             {
                 app.viewer.zoom_out();
             }
-            if ui.button("🔄")
+            if ui.button("Reset")
                 .on_hover_text("Reset zoom (Ctrl+0)")
                 .clicked()
             {

@@ -297,9 +297,9 @@ impl BitApp {
         
         // Check if we need async processing (large files in operations)
         let needs_async = self.operations.iter().any(|op| {
-            if let BitOperation::LoadFile { file_path, enabled, .. } = op {
-                if *enabled {
-                    if let Ok(metadata) = std::fs::metadata(file_path) {
+            if let BitOperation::LoadFile { inner } = op {
+                if inner.enabled {
+                    if let Ok(metadata) = std::fs::metadata(&inner.file_path) {
                         return metadata.len() > 10 * 1024 * 1024; // >10MB
                     }
                 }
@@ -314,41 +314,38 @@ impl BitApp {
         }
         
         // Otherwise use synchronous processing (fast)
-        // Check if we have enabled MultiWorksheetLoad or LoadFile operations
-        let has_multiworksheet = self.operations.iter().any(|op| {
-            matches!(op, BitOperation::MultiWorksheetLoad { enabled: true, .. })
-        });
-        let has_loadfile = self.operations.iter().any(|op| {
-            matches!(op, BitOperation::LoadFile { enabled: true, .. })
+        // Check if we have enabled source operations (LoadFile, MultiWorksheetLoad)
+        let has_source_op = self.operations.iter().any(|op| {
+            op.is_enabled() && op.is_source_operation()
         });
         
-        if has_multiworksheet || has_loadfile {
-            // MultiWorksheetLoad or LoadFile creates new bits from scratch
+        if has_source_op {
+            // Source operations (LoadFile/MultiWorksheetLoad) create new bits from scratch
             let mut result = BitVec::new();
-            
+
             for op in &self.operations {
                 // Skip disabled operations
                 if !op.is_enabled() {
                     continue;
                 }
-                
+
                 match op {
-                    BitOperation::LoadFile { file_path, .. } => {
+                    BitOperation::LoadFile { inner } => {
                         // Load bits from the file
-                        match read_file_as_bits(file_path) {
+                        match read_file_as_bits(&inner.file_path) {
                             Ok(bits) => {
                                 result.extend(bits);
                             }
                             Err(e) => {
-                                self.error_message = Some(format!("Failed to load file {}: {}", 
-                                    file_path.display(), e));
+                                self.error_message = Some(format!("Failed to load file {}: {}",
+                                    inner.file_path.display(), e));
                                 continue; // Skip if file can't be loaded
                             }
                         }
                     }
-                    BitOperation::MultiWorksheetLoad { worksheet_operations, .. } => {
+                    BitOperation::MultiWorksheetLoad { inner } => {
                         // Process each worksheet operation
-                        for wo in worksheet_operations {
+                        for wo in &inner.worksheet_operations {
                             if wo.worksheet_index < self.worksheets.len() && wo.worksheet_index != self.current_worksheet_index {
                                 // Get the source worksheet's processed bits (if it has a file loaded)
                                 let source_bits = if let Some(file_path) = &self.worksheets[wo.worksheet_index].file_path {
@@ -362,7 +359,7 @@ impl BitApp {
                                 } else {
                                     continue; // Skip if no file
                                 };
-                                
+
                                 // Apply the sequence to these bits
                                 let processed = wo.sequence.apply(&source_bits);
                                 result.extend(processed);
@@ -436,7 +433,7 @@ impl BitApp {
                         .and_then(|n| n.to_str())
                         .unwrap_or("file");
                     self.show_success(format!(
-                        "✓ Loaded \"{}\" - {} bits ({} bytes)",
+                        "Loaded \"{}\" - {} bits ({} bytes)",
                         file_name, bit_count, byte_count
                     ));
 
@@ -498,9 +495,11 @@ impl BitApp {
         // Create LoadFile operation
         let name = format!("Load: {}", path.file_name().unwrap_or_default().to_string_lossy());
         let operation = BitOperation::LoadFile {
-            name,
-            file_path: path,
-            enabled: true,
+            inner: crate::operations::load_file::LoadFileOperation {
+                name,
+                file_path: path,
+                enabled: true,
+            },
         };
 
         // Add operation and apply
@@ -518,10 +517,9 @@ impl BitApp {
         tx: std::sync::mpsc::Sender<OperationProgress>,
     ) -> std::io::Result<()> {
         let result = (|| -> Result<BitVec<u8, Msb0>, String> {
-            let has_multiworksheet = operations.iter().any(|op| matches!(op, BitOperation::MultiWorksheetLoad { .. }));
-            let has_loadfile = operations.iter().any(|op| matches!(op, BitOperation::LoadFile { .. }));
-            
-            if has_multiworksheet || has_loadfile {
+            let has_source_op = operations.iter().any(|op| op.is_source_operation());
+
+            if has_source_op {
                 let mut result = BitVec::new();
                 let total_ops = operations.len();
                 
@@ -532,13 +530,14 @@ impl BitApp {
                     }
                     
                     match op {
-                        BitOperation::LoadFile { file_path, name, .. } => {
+                        BitOperation::LoadFile { inner } => {
+                            let file_path = &inner.file_path;
                             let _ = tx.send(OperationProgress::ProcessingOperation {
                                 index: idx + 1,
                                 total: total_ops,
-                                description: format!("Loading file: {}", name),
+                                description: format!("Loading file: {}", inner.name),
                             });
-                            
+
                             // Check file size for progress reporting
                             if let Ok(metadata) = std::fs::metadata(file_path) {
                                 let file_size = metadata.len();
@@ -590,14 +589,14 @@ impl BitApp {
                                 }
                             }
                         }
-                        BitOperation::MultiWorksheetLoad { worksheet_operations, .. } => {
+                        BitOperation::MultiWorksheetLoad { inner } => {
                             let _ = tx.send(OperationProgress::ProcessingOperation {
                                 index: idx + 1,
                                 total: total_ops,
                                 description: "Processing multi-worksheet load".to_string(),
                             });
-                            
-                            for wo in worksheet_operations {
+
+                            for wo in &inner.worksheet_operations {
                                 if wo.worksheet_index < worksheets.len() && wo.worksheet_index != current_worksheet_index {
                                     let source_bits = if let Some(file_path) = &worksheets[wo.worksheet_index].file_path {
                                         match read_file_as_bits(file_path) {
@@ -667,7 +666,7 @@ impl BitApp {
                     let bit_count = self.processed_bits.len();
                     let byte_count = (bit_count + 7) / 8;
                     self.show_success(format!(
-                        "✓ Operations completed successfully! Processed {} bits ({} bytes)",
+                        "Operations completed successfully! Processed {} bits ({} bytes)",
                         bit_count, byte_count
                     ));
 
@@ -904,16 +903,12 @@ impl BitApp {
     }
 
     pub fn save_current_operation(&mut self) {
-        let Some(op_type) = self.show_operation_menu else {
-            return;
-        };
-
         let Some(ref editor_state) = self.editor_state else {
             return;
         };
 
         // Try to build the operation from editor state
-        let new_operation = match editor_state.try_build_operation(op_type) {
+        let new_operation = match editor_state.try_build_operation() {
             Ok(op) => op,
             Err(e) => {
                 self.error_message = Some(e);
@@ -922,7 +917,8 @@ impl BitApp {
         };
 
         // For LoadFile operations, add to recent files
-        if let BitOperation::LoadFile { ref file_path, .. } = new_operation {
+        if let BitOperation::LoadFile { ref inner } = new_operation {
+            let file_path = &inner.file_path;
             self.settings.recent_files.add(file_path.clone());
             self.settings.auto_save();
         }
@@ -1106,7 +1102,7 @@ impl BitApp {
                                                 
                                                 if let Some((_, pattern_name)) = pattern_match {
                                                     ui.separator();
-                                                    ui.label(format!("🎯 Pattern: {}", pattern_name));
+                                                    ui.label(format!("Pattern: {}", pattern_name));
                                                 }
                                             });
                                         }

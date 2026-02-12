@@ -262,7 +262,7 @@ impl eframe::App for BitApp {
 
         // Show confirmation dialog
         if self.show_confirmation_dialog {
-            egui::Window::new("⚠ Confirmation Required")
+            egui::Window::new("Confirmation Required")
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
@@ -273,11 +273,14 @@ impl eframe::App for BitApp {
                         ui.add_space(15.0);
 
                         ui.horizontal(|ui| {
-                            if ui.button("✓ Yes").clicked() {
+                            let yes_button = egui::Button::new(
+                                egui::RichText::new("Yes").color(egui::Color32::from_rgb(255, 80, 80))
+                            );
+                            if ui.add(yes_button).clicked() {
                                 self.execute_confirmed_action();
                             }
 
-                            if ui.button("✗ No").clicked() {
+                            if ui.button("No").clicked() {
                                 self.cancel_confirmation();
                             }
                         });
@@ -290,11 +293,11 @@ impl eframe::App for BitApp {
         if self.show_notification_dialog {
             if let Some(toast_type) = self.notification_dialog_type {
                 use crate::app::ToastType;
-                let (title, icon) = match toast_type {
-                    ToastType::Info => ("ℹ Information", "ℹ"),
-                    ToastType::Success => ("✓ Success", "✓"),
-                    ToastType::Warning => ("⚠ Warning", "⚠"),
-                    ToastType::Error => ("✗ Error", "✗"),
+                let title = match toast_type {
+                    ToastType::Info => "Information",
+                    ToastType::Success => "Success",
+                    ToastType::Warning => "Warning",
+                    ToastType::Error => "Error",
                 };
 
                 egui::Window::new(title)
@@ -303,8 +306,6 @@ impl eframe::App for BitApp {
                     .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                     .show(ctx, |ui| {
                         ui.vertical_centered(|ui| {
-                            ui.add_space(5.0);
-                            ui.label(egui::RichText::new(icon).size(32.0));
                             ui.add_space(5.0);
                             ui.label(&self.notification_dialog_message);
                             ui.add_space(15.0);
@@ -472,14 +473,7 @@ fn render_left_panels(app: &mut BitApp, ctx: &egui::Context) {
             egui::ScrollArea::vertical()
                 .id_salt("available_ops")
                 .show(ui, |ui| {
-                    let all_operations = [
-                        OperationType::LoadFile,
-                        OperationType::TakeSkipSequence,
-                        OperationType::InvertBits,
-                        OperationType::TruncateBits,
-                        OperationType::InterleaveBits,
-                        OperationType::MultiWorksheetLoad,
-                    ];
+                    let all_operations = OperationType::all();
 
                     // Filter operations based on search text
                     let search_lower = app.operations_search_text.to_lowercase();

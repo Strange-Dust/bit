@@ -19,14 +19,7 @@ impl OperationTemplate {
 
     /// Get the icon for this template based on operation type
     pub fn icon(&self) -> &'static str {
-        match &self.operation {
-            BitOperation::LoadFile { .. } => "📂",
-            BitOperation::TakeSkipSequence { .. } => "🔀",
-            BitOperation::InvertBits { .. } => "🔄",
-            BitOperation::MultiWorksheetLoad { .. } => "📑",
-            BitOperation::TruncateBits { .. } => "✂",
-            BitOperation::InterleaveBits { .. } => "🧩",
-        }
+        self.operation.operation_type().icon()
     }
 
     /// Create an operation from this template
@@ -67,9 +60,11 @@ impl TemplateLibrary {
         library.add_template(OperationTemplate::new(
             "Manchester Decode (Take Every Other)".to_string(),
             BitOperation::TakeSkipSequence {
-                name: "Manchester Decode".to_string(),
-                sequence: crate::operations::OperationSequence::from_string("T1S1").unwrap(),
-                enabled: true,
+                inner: crate::operations::take_skip_sequence::TakeSkipSequenceOperation {
+                    name: "Manchester Decode".to_string(),
+                    sequence: crate::operations::OperationSequence::from_string("T1S1").unwrap(),
+                    enabled: true,
+                },
             },
         ));
 
@@ -77,16 +72,18 @@ impl TemplateLibrary {
         library.add_template(OperationTemplate::new(
             "Byte Swap (16-bit words)".to_string(),
             BitOperation::InterleaveBits {
-                name: "Byte Swap".to_string(),
-                interleaver_type: crate::operations::InterleaverType::Block,
-                block_config: Some(crate::operations::BlockInterleaverConfig {
-                    block_size: 8,
-                    depth: 2,
-                    direction: crate::operations::InterleaverDirection::Deinterleave,
-                }),
-                convolutional_config: None,
-                symbol_config: None,
-                enabled: true,
+                inner: crate::operations::interleaver::InterleaveBitsOperation {
+                    name: "Byte Swap".to_string(),
+                    interleaver_type: crate::operations::InterleaverType::Block,
+                    block_config: Some(crate::operations::BlockInterleaverConfig {
+                        block_size: 8,
+                        depth: 2,
+                        direction: crate::operations::InterleaverDirection::Deinterleave,
+                    }),
+                    convolutional_config: None,
+                    symbol_config: None,
+                    enabled: true,
+                },
             },
         ));
 
@@ -94,8 +91,10 @@ impl TemplateLibrary {
         library.add_template(OperationTemplate::new(
             "Invert All Bits".to_string(),
             BitOperation::InvertBits {
-                name: "Invert All".to_string(),
-                enabled: true,
+                inner: crate::operations::invert::InvertBitsOperation {
+                    name: "Invert All".to_string(),
+                    enabled: true,
+                },
             },
         ));
 

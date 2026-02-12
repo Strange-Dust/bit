@@ -281,10 +281,10 @@ mod bit_operation_tests {
     #[test]
     fn test_invert_bits_operation() {
         let input = bitvec![u8, Msb0; 1, 0, 1, 0];
-        let op = BitOperation::InvertBits {
+        let op = BitOperation::InvertBits { inner: bit::operations::invert::InvertBitsOperation {
             name: "test".to_string(),
             enabled: true,
-        };
+        } };
         let result = op.apply(input);
         assert_eq!(result, bitvec![u8, Msb0; 0, 1, 0, 1]);
     }
@@ -293,11 +293,11 @@ mod bit_operation_tests {
     fn test_take_skip_sequence_operation() {
         let input = bitvec![u8, Msb0; 1, 0, 1, 0, 1, 1];
         let seq = OperationSequence::from_string("t2s1").unwrap();
-        let op = BitOperation::TakeSkipSequence {
+        let op = BitOperation::TakeSkipSequence { inner: bit::operations::take_skip_sequence::TakeSkipSequenceOperation {
             name: "test".to_string(),
             sequence: seq,
             enabled: true,
-        };
+        } };
         let result = op.apply(input);
         // t2: 10, s1: skip, t2: 01, s1: skip (end)
         assert_eq!(result, bitvec![u8, Msb0; 1, 0, 0, 1]);
@@ -305,41 +305,41 @@ mod bit_operation_tests {
 
     #[test]
     fn test_operation_name() {
-        let op = BitOperation::InvertBits {
+        let op = BitOperation::InvertBits { inner: bit::operations::invert::InvertBitsOperation {
             name: "MyInvert".to_string(),
             enabled: true,
-        };
+        } };
         assert_eq!(op.name(), "MyInvert");
     }
 
     #[test]
     fn test_operation_description() {
-        let op = BitOperation::InvertBits {
+        let op = BitOperation::InvertBits { inner: bit::operations::invert::InvertBitsOperation {
             name: "test".to_string(),
             enabled: true,
-        };
+        } };
         assert_eq!(op.description(), "Inverts all bits");
     }
 
     #[test]
     fn test_load_file_description() {
-        let op = BitOperation::LoadFile {
+        let op = BitOperation::LoadFile { inner: bit::operations::load_file::LoadFileOperation {
             name: "test".to_string(),
             file_path: PathBuf::from("test.bin"),
             enabled: true,
-        };
+        } };
         assert!(op.description().contains("test.bin"));
     }
 
     #[test]
     fn test_truncate_bits_basic() {
         let input = bitvec![u8, Msb0; 1, 0, 1, 0, 1, 1, 0, 0, 1, 1];
-        let op = BitOperation::TruncateBits {
+        let op = BitOperation::TruncateBits { inner: bit::operations::truncate::TruncateBitsOperation {
             name: "test".to_string(),
             start: 0,
             end: 5,
             enabled: true,
-        };
+        } };
         let result = op.apply(input);
         assert_eq!(result, bitvec![u8, Msb0; 1, 0, 1, 0, 1]);
     }
@@ -347,12 +347,12 @@ mod bit_operation_tests {
     #[test]
     fn test_truncate_bits_middle_range() {
         let input = bitvec![u8, Msb0; 1, 0, 1, 0, 1, 1, 0, 0, 1, 1];
-        let op = BitOperation::TruncateBits {
+        let op = BitOperation::TruncateBits { inner: bit::operations::truncate::TruncateBitsOperation {
             name: "test".to_string(),
             start: 3,
             end: 7,
             enabled: true,
-        };
+        } };
         let result = op.apply(input);
         // Bits 3-6 (indices 3,4,5,6)
         assert_eq!(result, bitvec![u8, Msb0; 0, 1, 1, 0]);
@@ -361,12 +361,12 @@ mod bit_operation_tests {
     #[test]
     fn test_truncate_bits_to_end() {
         let input = bitvec![u8, Msb0; 1, 0, 1, 0, 1, 1, 0, 0, 1, 1];
-        let op = BitOperation::TruncateBits {
+        let op = BitOperation::TruncateBits { inner: bit::operations::truncate::TruncateBitsOperation {
             name: "test".to_string(),
             start: 5,
             end: usize::MAX,
             enabled: true,
-        };
+        } };
         let result = op.apply(input);
         // From index 5 to end
         assert_eq!(result, bitvec![u8, Msb0; 1, 0, 0, 1, 1]);
@@ -376,12 +376,12 @@ mod bit_operation_tests {
     fn test_truncate_bits_beyond_length() {
         let input = bitvec![u8, Msb0; 1, 0, 1, 0];
         let expected = input.clone();
-        let op = BitOperation::TruncateBits {
+        let op = BitOperation::TruncateBits { inner: bit::operations::truncate::TruncateBitsOperation {
             name: "test".to_string(),
             start: 0,
             end: 100,
             enabled: true,
-        };
+        } };
         let result = op.apply(input);
         // Should clamp to actual length
         assert_eq!(result, expected);
@@ -390,12 +390,12 @@ mod bit_operation_tests {
     #[test]
     fn test_truncate_bits_start_beyond_length() {
         let input = bitvec![u8, Msb0; 1, 0, 1, 0];
-        let op = BitOperation::TruncateBits {
+        let op = BitOperation::TruncateBits { inner: bit::operations::truncate::TruncateBitsOperation {
             name: "test".to_string(),
             start: 10,
             end: 20,
             enabled: true,
-        };
+        } };
         let result = op.apply(input);
         // start >= end after clamping, should return empty
         assert_eq!(result.len(), 0);
@@ -404,12 +404,12 @@ mod bit_operation_tests {
     #[test]
     fn test_truncate_bits_start_equals_end() {
         let input = bitvec![u8, Msb0; 1, 0, 1, 0];
-        let op = BitOperation::TruncateBits {
+        let op = BitOperation::TruncateBits { inner: bit::operations::truncate::TruncateBitsOperation {
             name: "test".to_string(),
             start: 2,
             end: 2,
             enabled: true,
-        };
+        } };
         let result = op.apply(input);
         assert_eq!(result.len(), 0);
     }
@@ -417,24 +417,24 @@ mod bit_operation_tests {
     #[test]
     fn test_truncate_bits_single_bit() {
         let input = bitvec![u8, Msb0; 1, 0, 1, 0, 1];
-        let op = BitOperation::TruncateBits {
+        let op = BitOperation::TruncateBits { inner: bit::operations::truncate::TruncateBitsOperation {
             name: "test".to_string(),
             start: 2,
             end: 3,
             enabled: true,
-        };
+        } };
         let result = op.apply(input);
         assert_eq!(result, bitvec![u8, Msb0; 1]);
     }
 
     #[test]
     fn test_truncate_bits_description() {
-        let op = BitOperation::TruncateBits {
+        let op = BitOperation::TruncateBits { inner: bit::operations::truncate::TruncateBitsOperation {
             name: "test".to_string(),
             start: 100,
             end: 250,
             enabled: true,
-        };
+        } };
         assert_eq!(op.description(), "Keep bits 100-250");
     }
 }

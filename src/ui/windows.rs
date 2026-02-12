@@ -2,12 +2,12 @@
 
 use crate::analysis::{Pattern, PatternFormat};
 use crate::app::BitApp;
-use crate::operations::{EditorAction, EditorContext, render_operation_editor};
+use crate::operations::{EditorAction, EditorContext};
 use eframe::egui;
 
 pub fn render_pattern_locator_window(app: &mut BitApp, ctx: &egui::Context) {
     if app.show_pattern_locator {
-        egui::Window::new("🔍 Pattern Locator")
+        egui::Window::new("Pattern Locator")
             .open(&mut app.show_pattern_locator)
             .default_width(450.0)
             .default_height(700.0)
@@ -46,7 +46,7 @@ pub fn render_pattern_locator_window(app: &mut BitApp, ctx: &egui::Context) {
                             });
                             
                             ui.horizontal(|ui| {
-                                if ui.button("➕ Add Pattern").clicked() {
+                                if ui.button("+ Add Pattern").clicked() {
                                     let name = if app.pattern_name_input.is_empty() {
                                         format!("Pattern {}", app.patterns.len() + 1)
                                     } else {
@@ -66,7 +66,7 @@ pub fn render_pattern_locator_window(app: &mut BitApp, ctx: &egui::Context) {
                                     }
                                 }
                                 
-                                if ui.button("🔄 Clear").clicked() {
+                                if ui.button("Clear").clicked() {
                                     app.pattern_name_input.clear();
                                     app.pattern_input.clear();
                                     app.pattern_garbles = 0;
@@ -91,11 +91,11 @@ pub fn render_pattern_locator_window(app: &mut BitApp, ctx: &egui::Context) {
                                             app.selected_pattern = Some(idx);
                                         }
                                         
-                                        if ui.button("🔍 Search").clicked() {
+                                        if ui.button("Search").clicked() {
                                             to_search = Some(idx);
                                         }
                                         
-                                        if ui.button("❌").clicked() {
+                                        if ui.button("x").clicked() {
                                             to_remove = Some(idx);
                                         }
                                     });
@@ -134,14 +134,14 @@ pub fn render_pattern_locator_window(app: &mut BitApp, ctx: &egui::Context) {
                                 
                                 if !pattern.matches.is_empty() {
                                     ui.horizontal(|ui| {
-                                        if ui.button("🎯 Highlight All").clicked() {
+                                        if ui.button("Highlight All").clicked() {
                                             app.viewer.clear_highlights();
                                             for m in &pattern.matches {
                                                 app.viewer.add_highlight_range(m.position, pattern.bits.len());
                                             }
                                         }
                                         
-                                        if ui.button("🔲 Clear Highlights").clicked() {
+                                        if ui.button("Clear Highlights").clicked() {
                                             app.viewer.clear_highlights();
                                         }
                                     });
@@ -199,7 +199,7 @@ pub fn render_operation_windows(app: &mut BitApp, ctx: &egui::Context) {
 
                 // Render the editor and get the action
                 if let Some(ref mut editor_state) = app.editor_state {
-                    action = render_operation_editor(op_type, editor_state, &editor_ctx, ui);
+                    action = editor_state.render(&editor_ctx, ui);
                 }
             });
 
@@ -219,7 +219,7 @@ pub fn render_operation_windows(app: &mut BitApp, ctx: &egui::Context) {
 pub fn render_column_editor_window(app: &mut BitApp, ctx: &egui::Context) {
     if app.show_column_editor {
         let mut open = true;
-        egui::Window::new("➕ Add Protocol Column")
+        egui::Window::new("+ Add Protocol Column")
             .open(&mut open)
             .resizable(false)
             .show(ctx, |ui| {
@@ -276,7 +276,7 @@ pub fn render_column_editor_window(app: &mut BitApp, ctx: &egui::Context) {
                 ui.add_space(8.0);
                 
                 ui.horizontal(|ui| {
-                    if ui.button("✓ Add Column").clicked() {
+                    if ui.button("Add Column").clicked() {
                         if let (Ok(start), Ok(end)) = (
                             app.column_editor_bit_start.parse::<usize>(),
                             app.column_editor_bit_end.parse::<usize>()
@@ -309,7 +309,7 @@ pub fn render_column_editor_window(app: &mut BitApp, ctx: &egui::Context) {
                         }
                     }
                     
-                    if ui.button("✗ Cancel").clicked() {
+                    if ui.button("Cancel").clicked() {
                         app.show_column_editor = false;
                     }
                 });
@@ -339,7 +339,7 @@ pub fn render_frame_width_finder_window(app: &mut BitApp, ctx: &egui::Context) {
     let mut apply_width: Option<usize> = None;
     let mut keep_open = true;
     
-    egui::Window::new("🔍 Find Frame Width")
+    egui::Window::new("Find Frame Width")
         .open(&mut keep_open)
         .default_width(800.0)
         .default_height(600.0)
@@ -366,7 +366,7 @@ pub fn render_frame_width_finder_window(app: &mut BitApp, ctx: &egui::Context) {
                 ui.add_space(10.0);
                 
                 ui.label("Delta:")
-                    .on_hover_text("⚠️ Delta measures REPETITION PERIOD, not frame width!\n\n\
+                    .on_hover_text("Warning: Delta measures REPETITION PERIOD, not frame width!\n\n\
                         • Delta = 0: Find frame width by bit position consistency (recommended)\n\
                         • Delta > 0: Find repetition period (e.g., delta=5 finds patterns every 5 frames)\n\
                         • For ASCII/binary frame detection, keep Delta = 0");
@@ -377,7 +377,7 @@ pub fn render_frame_width_finder_window(app: &mut BitApp, ctx: &egui::Context) {
             
             ui.add_space(5.0);
             
-            if ui.button("🔍 Analyze").clicked() {
+            if ui.button("Analyze").clicked() {
                 run_analysis = true;
             }
             
@@ -391,7 +391,7 @@ pub fn render_frame_width_finder_window(app: &mut BitApp, ctx: &egui::Context) {
                     
                     ui.add_space(20.0);
                     
-                    if ui.button("✓ Apply Width to Viewer").clicked() {
+                    if ui.button("Apply Width to Viewer").clicked() {
                         apply_width = Some(analysis.best_width);
                     }
                 });
@@ -401,7 +401,7 @@ pub fn render_frame_width_finder_window(app: &mut BitApp, ctx: &egui::Context) {
                 // Width scores line chart
                 ui.heading("Width Scores");
                 ui.label("Higher scores indicate more consistent bit patterns at that width");
-                ui.label("💡 Click on the graph to select a width");
+                ui.label("Tip: Click on the graph to select a width");
                 
                 let plot_response = Plot::new("width_scores_plot")
                     .view_aspect(2.5)
@@ -465,7 +465,7 @@ pub fn render_frame_width_finder_window(app: &mut BitApp, ctx: &egui::Context) {
                         .find(|(w, _)| *w == width)
                         .map(|(_, s)| *s)
                         .unwrap_or(0.0);
-                    ui.label(format!("🖱️ Hovering: Width {} (score: {:.6}) - Click to apply", width, score));
+                    ui.label(format!("Hovering: Width {} (score: {:.6}) - Click to apply", width, score));
                 }
                 
                 ui.add_space(10.0);
