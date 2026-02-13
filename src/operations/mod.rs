@@ -9,7 +9,9 @@
 
 pub mod base;
 pub mod editor;
+pub mod exclude;
 pub mod interleaver;
+pub mod isolate;
 pub mod load_file;
 pub mod take_skip_sequence;
 pub mod invert;
@@ -38,6 +40,8 @@ use invert::InvertBitsOperation;
 use multi_worksheet::MultiWorksheetLoadOperation;
 use truncate::TruncateBitsOperation;
 use interleaver::InterleaveBitsOperation;
+use isolate::IsolateBitsOperation;
+use exclude::ExcludeBitsOperation;
 
 use bitvec::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -164,6 +168,18 @@ register_operations! {
         description: "Interleave/de-interleave bits for error resilience",
         category: Transformation,
     },
+    IsolateBits {
+        display_name: "Isolate Bits",
+        icon: "",
+        description: "Keep selected columns from selected rows",
+        category: Transformation,
+    },
+    ExcludeBits {
+        display_name: "Exclude Bits",
+        icon: "",
+        description: "Remove selected columns from selected rows",
+        category: Transformation,
+    },
 }
 
 // ============================================================================
@@ -182,6 +198,8 @@ pub enum BitOperation {
     MultiWorksheetLoad { #[serde(flatten)] inner: MultiWorksheetLoadOperation },
     TruncateBits { #[serde(flatten)] inner: TruncateBitsOperation },
     InterleaveBits { #[serde(flatten)] inner: InterleaveBitsOperation },
+    IsolateBits { #[serde(flatten)] inner: IsolateBitsOperation },
+    ExcludeBits { #[serde(flatten)] inner: ExcludeBitsOperation },
 }
 
 // Delegating macro - auto-generates all method dispatch as one-liner match arms
@@ -220,4 +238,6 @@ impl_bit_operation_delegating!(
     MultiWorksheetLoad,
     TruncateBits,
     InterleaveBits,
+    IsolateBits,
+    ExcludeBits,
 );

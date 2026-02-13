@@ -1,0 +1,197 @@
+use bitvec::prelude::*;
+use serde::{Deserialize, Serialize};
+use super::traits::{EditorAction, EditorContext, OperationEditor, render_save_cancel_buttons};
+use crate::utils::eval_expression;
+use eframe::egui;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IsolateBitsOperation {
+    pub name: String,
+    pub start_col: usize,
+    pub width: usize,
+    pub start_row: usize,
+    pub end_row: usize,
+    pub source_frame_length: usize,
+    pub enabled: bool,
+}
+
+impl IsolateBitsOperation {
+    pub fn description(&self) -> String {
+        let end_col = self.start_col + self.width - 1;
+        let end_row_display = self.end_row.saturating_sub(1);
+        format!(
+            "Isolate cols {}-{} from rows {}-{} (frame={})",
+            self.start_col, end_col, self.start_row, end_row_display, self.source_frame_length
+        )
+    }
+
+    pub fn apply(&self, input: BitVec<u8, Msb0>) -> BitVec<u8, Msb0> {
+        let fl = self.source_frame_length;
+        if fl == 0 || self.width == 0 {
+            return BitVec::new();
+        }
+        let total_rows = (input.len() + fl - 1) / fl;
+        let actual_start_row = self.start_row.min(total_rows);
+        let actual_end_row = self.end_row.min(total_rows);
+        let mut result = BitVec::new();
+        for row in actual_start_row..actual_end_row {
+            for col in self.start_col..(self.start_col + self.width) {
+                let bit_idx = row * fl + col;
+                if bit_idx < input.len() && col < fl {
+                    result.push(input[bit_idx]);
+                }
+            }
+        }
+        result
+    }
+
+    pub fn is_source_operation(&self) -> bool {
+        false
+    }
+}
+
+// --- Editor ---
+
+#[derive(Debug, Clone)]
+pub struct IsolateEditor {
+    pub name: String,
+    pub start_col_str: String,
+    pub width_str: String,
+    pub start_row_str: String,
+    pub end_row_str: String,
+    pub source_frame_length_str: String,
+}
+
+impl Default for IsolateEditor {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            start_col_str: "0".to_string(),
+            width_str: "8".to_string(),
+            start_row_str: "0".to_string(),
+            end_row_str: String::new(),
+            source_frame_length_str: "64".to_string(),
+        }
+    }
+}
+
+impl OperationEditor for IsolateEditor {
+    type Operation = IsolateBitsOperation;
+
+    fn from_operation(op: &IsolateBitsOperation) -> Self {
+        Self {
+            name: op.name.clone(),
+            start_col_str: op.start_col.to_string(),
+            width_str: op.width.to_string(),
+            start_row_str: op.start_row.to_string(),
+            end_row_str: if op.end_row == usize::MAX {
+                String::new()
+            } else {
+                op.end_row.to_string()
+            },
+            source_frame_length_str: op.source_frame_length.to_string(),
+        }
+    }
+
+    fn try_build(&self) -> Result<IsolateBitsOperation, String> {
+        let start_col = eval_expression(&self.start_col_str)
+            .map_err(|_| "Invalid start column".to_string())?;
+        let width = eval_expression(&self.width_str)
+            .map_err(|_| "Invalid width".to_string())?;
+        let start_row = eval_expression(&self.start_row_str)
+            .map_err(|_| "Invalid start row".to_string())?;
+        let end_row = if self.end_row_str.trim().is_empty() {
+            usize::MAX
+        } else {
+            eval_expression(&self.end_row_str)
+                .map_err(|_| "Invalid end row".to_string())?
+        };
+        let source_frame_length = eval_expression(&self.source_frame_length_str)
+            .map_err(|_| "Invalid source frame length".to_string())?;
+
+        if width == 0 {
+            return Err("Width must be greater than 0".to_string());
+        }
+        if source_frame_length == 0 {
+            return Err("Source frame length must be greater than 0".to_string());
+        }
+        if start_col + width > source_frame_length {
+            return Err("Start column + width exceeds frame length".to_string());
+        }
+        if start_row >= end_row {
+            return Err("Start row must be less than end row".to_string());
+        }
+
+        let name = if self.name.trim().is_empty() {
+            let end_col = start_col + width - 1;
+            format!("Isolate cols {}-{}", start_col, end_col)
+        } else {
+            self.name.clone()
+        };
+
+        Ok(IsolateBitsOperation {
+            name,
+            start_col,
+            width,
+            start_row,
+            end_row,
+            source_frame_length,
+            enabled: true,
+        })
+    }
+
+    fn render(&mut self, _ctx: &EditorContext, ui: &mut egui::Ui) -> EditorAction {
+        ui.heading("Isolate Bits");
+        ui.separator();
+
+        ui.horizontal(|ui| {
+            ui.label("Name:");
+            ui.text_edit_singleline(&mut self.name);
+        });
+
+        ui.add_space(8.0);
+        ui.label("Keep only the selected columns from the selected rows.");
+        ui.label("The output frame length becomes the selection width.");
+        ui.add_space(4.0);
+
+        let start_col_valid = !self.start_col_str.is_empty() && eval_expression(&self.start_col_str).is_ok();
+        let width_valid = !self.width_str.is_empty() && eval_expression(&self.width_str).is_ok();
+        let start_row_valid = !self.start_row_str.is_empty() && eval_expression(&self.start_row_str).is_ok();
+        let end_row_valid = self.end_row_str.is_empty() || eval_expression(&self.end_row_str).is_ok();
+        let fl_valid = !self.source_frame_length_str.is_empty() && eval_expression(&self.source_frame_length_str).is_ok();
+
+        let is_valid = start_col_valid && width_valid && start_row_valid && end_row_valid && fl_valid;
+
+        render_field(ui, "Start Column:", &mut self.start_col_str, start_col_valid);
+        render_field(ui, "Width (columns):", &mut self.width_str, width_valid);
+        render_field(ui, "Start Row:", &mut self.start_row_str, start_row_valid);
+        render_field(ui, "End Row (exclusive):", &mut self.end_row_str, end_row_valid);
+        render_field(ui, "Source Frame Length:", &mut self.source_frame_length_str, fl_valid);
+
+        ui.add_space(4.0);
+        ui.label("Tips:");
+        ui.label("  Leave end row empty to include all rows");
+        ui.label("  You can use math: 8*8, 100+50");
+
+        ui.add_space(8.0);
+        render_save_cancel_buttons(ui, is_valid)
+    }
+}
+
+fn render_field(ui: &mut egui::Ui, label: &str, value: &mut String, valid: bool) {
+    ui.horizontal(|ui| {
+        ui.label(label);
+        let mut edit = egui::TextEdit::singleline(value);
+        if !valid {
+            edit = edit.text_color(egui::Color32::from_rgb(255, 100, 100));
+        }
+        let response = ui.add(edit);
+        if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+            if !value.is_empty() {
+                if let Ok(result) = eval_expression(value) {
+                    *value = result.to_string();
+                }
+            }
+        }
+    });
+}

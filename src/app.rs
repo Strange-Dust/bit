@@ -2,7 +2,7 @@
 
 use crate::analysis::{Pattern, PatternFormat, FrameWidthAnalysis};
 use crate::app_state::{LoadingState, OperationProcessingState};
-use crate::core::ViewMode;
+use crate::core::{BitSelection, ViewMode};
 use crate::operations::{BitOperation, OperationEditorState, OperationType};
 use crate::storage::{read_file_as_bits, read_file_as_bits_with_progress, write_bits_to_file, AppSession, AppSettings, Worksheet, LoadProgress};
 use crate::viewers::{BitViewer, ByteViewer};
@@ -116,6 +116,11 @@ pub struct BitApp {
     pub show_goto_offset_dialog: bool,
     pub goto_offset_input: String,
     pub goto_offset_format: GotoOffsetFormat,
+
+    // 2D selection state
+    pub selection: BitSelection,
+    pub show_context_menu: bool,
+    pub context_menu_pos: Option<egui::Pos2>,
 }
 
 /// Represents actions that require user confirmation
@@ -266,6 +271,9 @@ impl Default for BitApp {
             show_goto_offset_dialog: false,
             goto_offset_input: String::new(),
             goto_offset_format: GotoOffsetFormat::Bit,
+            selection: BitSelection::new(),
+            show_context_menu: false,
+            context_menu_pos: None,
         }
     }
 }
@@ -1032,7 +1040,7 @@ impl BitApp {
                                 0.0,
                                 egui::Color32::from_rgb(245, 245, 245)
                             );
-                            
+
                             // Only render visible rows
                             for row in row_range {
                                 ui.horizontal(|ui| {
@@ -1048,7 +1056,7 @@ impl BitApp {
                                             )
                                         );
                                     }
-                                    
+
                                     // Draw ASCII characters - only convert bytes we need for this row
                                     let row_start = row * chars_per_row;
                                     let row_end = (row_start + chars_per_row).min(total_bytes);
@@ -1061,21 +1069,21 @@ impl BitApp {
                                             break;
                                         }
                                         let byte_bits = &bits[bit_start..bit_end];
-                                        
+
                                         let mut byte = 0u8;
                                         for (i, bit) in byte_bits.iter().enumerate() {
                                             if *bit {
                                                 byte |= 1 << (7 - i);
                                             }
                                         }
-                                        
+
                                         // Check if this byte is part of any pattern match
                                         let mut pattern_match: Option<(egui::Color32, String)> = None;
                                         for (pattern_idx, pattern) in patterns.iter().enumerate() {
                                             for match_info in &pattern.matches {
                                                 let match_start = match_info.position;
                                                 let match_end = match_info.position + pattern.bits.len();
-                                                
+
                                                 // Check if this byte overlaps with the pattern match
                                                 if bit_start < match_end && bit_end > match_start {
                                                     let color = pattern_colors[pattern_idx % pattern_colors.len()];
@@ -1087,18 +1095,18 @@ impl BitApp {
                                                 break;
                                             }
                                         }
-                                        
+
                                         let ch = if byte >= 32 && byte <= 126 {
                                             byte as char
                                         } else {
                                             '~'
                                         };
-                                        
+
                                         let (rect, response) = ui.allocate_exact_size(
                                             egui::Vec2::new(char_width, char_height),
                                             egui::Sense::hover(),
                                         );
-                                        
+
                                         // Draw background highlight for pattern matches
                                         if let Some((pattern_color, _)) = pattern_match {
                                             ui.painter().rect_filled(

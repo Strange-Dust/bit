@@ -2,6 +2,7 @@ use bitvec::prelude::*;
 use egui::{Color32, Pos2, Rect, Sense, Stroke, Vec2};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use crate::core::BitSelection;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum BitShape {
@@ -63,7 +64,7 @@ impl BitViewer {
         self.jump_to_bit = Some(bit_position);
     }
 
-    pub fn show(&mut self, ui: &mut egui::Ui, bit_offset: usize) -> usize {
+    pub fn show(&mut self, ui: &mut egui::Ui, bit_offset: usize, selection: &mut BitSelection) -> usize {
         let frame_length = self.frame_length;
         let sub_row = bit_offset % frame_length;
         // Total rows covering all data (aligned to sub_row)
@@ -127,6 +128,18 @@ impl BitViewer {
         let thick_v = self.thick_grid_interval_vertical;
         let thick_v_spacing = self.thick_grid_spacing_vertical;
 
+        // Selection state captured from inside the viewport closure
+        let mut drag_started: Option<usize> = None;
+        let mut drag_updated: Option<usize> = None;
+        let mut drag_stopped = false;
+
+        // Pre-compute selection rect to avoid borrowing selection inside closure
+        let sel_rect = if selection.is_active || selection.is_dragging {
+            Some(selection.rect(frame_length))
+        } else {
+            None
+        };
+
         let output = scroll_area.show_viewport(ui, |ui, viewport| {
                 // Set the content size
                 ui.set_width(content_width);
@@ -134,7 +147,7 @@ impl BitViewer {
 
                 let (response, painter) = ui.allocate_painter(
                     Vec2::new(content_width, content_height),
-                    Sense::hover(),
+                    Sense::click_and_drag(),
                 );
 
                 // Helper function to calculate position with spacing
@@ -145,6 +158,36 @@ impl BitViewer {
                         (index as f32) * cell_size
                     }
                 };
+
+                // Helper to invert position back to index (accounting for thick grid spacing)
+                let invert_position = |pos: f32, interval: usize, spacing: f32| -> usize {
+                    if interval == 0 || spacing <= 0.0 {
+                        return (pos / cell_size).floor().max(0.0) as usize;
+                    }
+                    let group_width = interval as f32 * cell_size + spacing;
+                    let group = (pos / group_width).floor().max(0.0) as usize;
+                    let remainder = pos - group as f32 * group_width;
+                    let in_group = (remainder / cell_size).floor().clamp(0.0, interval as f32 - 1.0) as usize;
+                    group * interval + in_group
+                };
+
+                // Handle pointer-to-bit conversion for drag events
+                if let Some(pointer_pos) = response.interact_pointer_pos() {
+                    let rel_x = pointer_pos.x - response.rect.min.x;
+                    let rel_y = pointer_pos.y - response.rect.min.y;
+                    let col = invert_position(rel_x, self.thick_grid_interval_horizontal, self.thick_grid_spacing_horizontal).min(frame_length.saturating_sub(1));
+                    let row = invert_position(rel_y, self.thick_grid_interval_vertical, self.thick_grid_spacing_vertical);
+                    let bit_idx = sub_row + row * frame_length + col;
+
+                    if response.drag_started_by(egui::PointerButton::Primary) {
+                        drag_started = Some(bit_idx);
+                    } else if response.dragged_by(egui::PointerButton::Primary) {
+                        drag_updated = Some(bit_idx);
+                    }
+                }
+                if response.drag_stopped_by(egui::PointerButton::Primary) {
+                    drag_stopped = true;
+                }
 
                 // Binary search for start row
                 let start_row = if total_rows == 0 {
@@ -212,7 +255,93 @@ impl BitViewer {
                     col.min(frame_length)
                 };
 
-                // Only render visible bits
+                // Pre-compute shape geometry
+                let half = self.bit_size / 2.0;
+
+                const N_CIRCLE_SEG: usize = 16;
+                let circle_offsets: [(f32, f32); N_CIRCLE_SEG] = {
+                    let mut o = [(0.0f32, 0.0f32); N_CIRCLE_SEG];
+                    for i in 0..N_CIRCLE_SEG {
+                        let a = (i as f32) * std::f32::consts::TAU / N_CIRCLE_SEG as f32;
+                        o[i] = (half * a.cos(), half * a.sin());
+                    }
+                    o
+                };
+
+                let octagon_offsets: [(f32, f32); 8] = {
+                    let ao = std::f32::consts::PI / 8.0;
+                    let mut o = [(0.0f32, 0.0f32); 8];
+                    for i in 0..8 {
+                        let a = ao + (i as f32) * std::f32::consts::PI / 4.0;
+                        o[i] = (half * a.cos(), half * a.sin());
+                    }
+                    o
+                };
+
+                // Pre-compute outline ring offsets (outer/inner vertices for ring mesh)
+                let circle_outline_ring: [(f32, f32, f32, f32); N_CIRCLE_SEG] = {
+                    let hw = 0.5;
+                    let ro = half + hw;
+                    let ri = (half - hw).max(0.0);
+                    let mut r = [(0.0f32, 0.0f32, 0.0f32, 0.0f32); N_CIRCLE_SEG];
+                    for i in 0..N_CIRCLE_SEG {
+                        let a = (i as f32) * std::f32::consts::TAU / N_CIRCLE_SEG as f32;
+                        let (c, s) = (a.cos(), a.sin());
+                        r[i] = (ro * c, ro * s, ri * c, ri * s);
+                    }
+                    r
+                };
+
+                let octagon_outline_ring: [(f32, f32, f32, f32); 8] = {
+                    let hw = 0.5;
+                    let ro = half + hw;
+                    let ri = (half - hw).max(0.0);
+                    let ao = std::f32::consts::PI / 8.0;
+                    let mut r = [(0.0f32, 0.0f32, 0.0f32, 0.0f32); 8];
+                    for i in 0..8 {
+                        let a = ao + (i as f32) * std::f32::consts::PI / 4.0;
+                        let (c, s) = (a.cos(), a.sin());
+                        r[i] = (ro * c, ro * s, ri * c, ri * s);
+                    }
+                    r
+                };
+
+                let grid_stroke = Stroke::new(1.0, Color32::GRAY);
+                let thick_grid_stroke = Stroke::new(2.0, Color32::GRAY);
+                let has_highlights = !self.highlighted_bits.is_empty();
+                let highlight_color = Color32::from_rgba_unmultiplied(255, 255, 0, 150);
+                let outline_color = Color32::GRAY;
+
+                // Batched meshes: 1-3 draw calls instead of 41K+ individual shapes
+                let vis_bits = (end_row.saturating_sub(start_row)) * (end_col.saturating_sub(start_col));
+                let mut fill_mesh = egui::Mesh::default();
+                let mut highlight_mesh = egui::Mesh::default();
+                let mut outline_mesh = egui::Mesh::default();
+
+                match self.shape {
+                    BitShape::Square => {
+                        fill_mesh.vertices.reserve(vis_bits * 4);
+                        fill_mesh.indices.reserve(vis_bits * 6);
+                    }
+                    BitShape::Circle => {
+                        fill_mesh.vertices.reserve(vis_bits * (N_CIRCLE_SEG + 1));
+                        fill_mesh.indices.reserve(vis_bits * N_CIRCLE_SEG * 3);
+                        if self.show_grid {
+                            outline_mesh.vertices.reserve(vis_bits * N_CIRCLE_SEG * 2);
+                            outline_mesh.indices.reserve(vis_bits * N_CIRCLE_SEG * 6);
+                        }
+                    }
+                    BitShape::Octagon => {
+                        fill_mesh.vertices.reserve(vis_bits * 9);
+                        fill_mesh.indices.reserve(vis_bits * 24);
+                        if self.show_grid {
+                            outline_mesh.vertices.reserve(vis_bits * 16);
+                            outline_mesh.indices.reserve(vis_bits * 48);
+                        }
+                    }
+                }
+
+                // Build meshes for all visible bits
                 for row in start_row..end_row {
                     for col in start_col..end_col {
                         let bit_index = sub_row + row * frame_length + col;
@@ -223,138 +352,195 @@ impl BitViewer {
                         let bit = self.bits[bit_index];
                         let color = if bit { Color32::BLACK } else { Color32::WHITE };
 
-                        // Calculate accumulated extra spacing for thick grid boundaries
-                        let accumulated_x_spacing = if self.thick_grid_interval_horizontal > 0 && col > 0 {
-                            (col / self.thick_grid_interval_horizontal) as f32 * self.thick_grid_spacing_horizontal
-                        } else {
-                            0.0
-                        };
-                        
-                        let accumulated_y_spacing = if self.thick_grid_interval_vertical > 0 && row > 0 {
-                            (row / self.thick_grid_interval_vertical) as f32 * self.thick_grid_spacing_vertical
-                        } else {
-                            0.0
-                        };
+                        let x = response.rect.min.x + calc_position(col, self.thick_grid_interval_horizontal, self.thick_grid_spacing_horizontal);
+                        let y = response.rect.min.y + calc_position(row, self.thick_grid_interval_vertical, self.thick_grid_spacing_vertical);
 
-                        let x = response.rect.min.x + (col as f32) * cell_size + accumulated_x_spacing;
-                        let y = response.rect.min.y + (row as f32) * cell_size + accumulated_y_spacing;
-
-                        // Determine if this bit is on a thick grid boundary
-                        let is_thick_horizontal = self.thick_grid_interval_horizontal > 0 
-                            && col % self.thick_grid_interval_horizontal == 0;
-                        let is_thick_vertical = self.thick_grid_interval_vertical > 0 
-                            && row % self.thick_grid_interval_vertical == 0;
+                        let is_highlighted = has_highlights && self.highlighted_bits.contains(&bit_index);
 
                         match self.shape {
                             BitShape::Square => {
-                                let rect = Rect::from_min_size(
-                                    Pos2::new(x, y),
-                                    Vec2::new(self.bit_size, self.bit_size),
-                                );
-                                painter.rect_filled(rect, 0.0, color);
-                                
-                                // Draw highlight overlay if this bit is highlighted
-                                if self.highlighted_bits.contains(&bit_index) {
-                                    painter.rect_filled(rect, 0.0, Color32::from_rgba_unmultiplied(255, 255, 0, 150));
-                                }
-                                
-                                if self.show_grid {
-                                    // Draw edges individually to support different thicknesses
-                                    let left_width = if is_thick_horizontal { 2.0 } else { 1.0 };
-                                    let top_width = if is_thick_vertical { 2.0 } else { 1.0 };
-                                    let right_width = 1.0;
-                                    let bottom_width = 1.0;
-                                    
-                                    // Left edge
-                                    painter.line_segment(
-                                        [rect.left_top(), rect.left_bottom()],
-                                        Stroke::new(left_width, Color32::GRAY),
-                                    );
-                                    // Top edge
-                                    painter.line_segment(
-                                        [rect.left_top(), rect.right_top()],
-                                        Stroke::new(top_width, Color32::GRAY),
-                                    );
-                                    // Right edge
-                                    painter.line_segment(
-                                        [rect.right_top(), rect.right_bottom()],
-                                        Stroke::new(right_width, Color32::GRAY),
-                                    );
-                                    // Bottom edge
-                                    painter.line_segment(
-                                        [rect.left_bottom(), rect.right_bottom()],
-                                        Stroke::new(bottom_width, Color32::GRAY),
-                                    );
+                                let base = fill_mesh.vertices.len() as u32;
+                                fill_mesh.colored_vertex(Pos2::new(x, y), color);
+                                fill_mesh.colored_vertex(Pos2::new(x + self.bit_size, y), color);
+                                fill_mesh.colored_vertex(Pos2::new(x + self.bit_size, y + self.bit_size), color);
+                                fill_mesh.colored_vertex(Pos2::new(x, y + self.bit_size), color);
+                                fill_mesh.add_triangle(base, base + 1, base + 2);
+                                fill_mesh.add_triangle(base, base + 2, base + 3);
+
+                                if is_highlighted {
+                                    let hb = highlight_mesh.vertices.len() as u32;
+                                    highlight_mesh.colored_vertex(Pos2::new(x, y), highlight_color);
+                                    highlight_mesh.colored_vertex(Pos2::new(x + self.bit_size, y), highlight_color);
+                                    highlight_mesh.colored_vertex(Pos2::new(x + self.bit_size, y + self.bit_size), highlight_color);
+                                    highlight_mesh.colored_vertex(Pos2::new(x, y + self.bit_size), highlight_color);
+                                    highlight_mesh.add_triangle(hb, hb + 1, hb + 2);
+                                    highlight_mesh.add_triangle(hb, hb + 2, hb + 3);
                                 }
                             }
                             BitShape::Circle => {
-                                let center = Pos2::new(
-                                    x + self.bit_size / 2.0,
-                                    y + self.bit_size / 2.0,
-                                );
-                                painter.circle_filled(center, self.bit_size / 2.0, color);
-                                
-                                // Draw highlight overlay if this bit is highlighted
-                                if self.highlighted_bits.contains(&bit_index) {
-                                    painter.circle_filled(center, self.bit_size / 2.0, Color32::from_rgba_unmultiplied(255, 255, 0, 150));
+                                let cx = x + half;
+                                let cy = y + half;
+
+                                // Fan: center + 16 perimeter vertices
+                                let base = fill_mesh.vertices.len() as u32;
+                                fill_mesh.colored_vertex(Pos2::new(cx, cy), color);
+                                for &(dx, dy) in &circle_offsets {
+                                    fill_mesh.colored_vertex(Pos2::new(cx + dx, cy + dy), color);
                                 }
-                                
+                                for i in 0..N_CIRCLE_SEG as u32 {
+                                    fill_mesh.add_triangle(base, base + 1 + i, base + 1 + (i + 1) % N_CIRCLE_SEG as u32);
+                                }
+
+                                if is_highlighted {
+                                    let hb = highlight_mesh.vertices.len() as u32;
+                                    highlight_mesh.colored_vertex(Pos2::new(cx, cy), highlight_color);
+                                    for &(dx, dy) in &circle_offsets {
+                                        highlight_mesh.colored_vertex(Pos2::new(cx + dx, cy + dy), highlight_color);
+                                    }
+                                    for i in 0..N_CIRCLE_SEG as u32 {
+                                        highlight_mesh.add_triangle(hb, hb + 1 + i, hb + 1 + (i + 1) % N_CIRCLE_SEG as u32);
+                                    }
+                                }
+
                                 if self.show_grid {
-                                    // Use normal thin stroke for circles - spacing makes boundaries clear
-                                    painter.circle_stroke(
-                                        center,
-                                        self.bit_size / 2.0,
-                                        Stroke::new(1.0, Color32::GRAY),
-                                    );
+                                    // Ring mesh: 32 vertices, 32 triangles per circle outline
+                                    let ob = outline_mesh.vertices.len() as u32;
+                                    for &(ox, oy, ix, iy) in &circle_outline_ring {
+                                        outline_mesh.colored_vertex(Pos2::new(cx + ox, cy + oy), outline_color);
+                                        outline_mesh.colored_vertex(Pos2::new(cx + ix, cy + iy), outline_color);
+                                    }
+                                    for i in 0..N_CIRCLE_SEG as u32 {
+                                        let next = (i + 1) % N_CIRCLE_SEG as u32;
+                                        outline_mesh.add_triangle(ob + i * 2, ob + i * 2 + 1, ob + next * 2 + 1);
+                                        outline_mesh.add_triangle(ob + i * 2, ob + next * 2 + 1, ob + next * 2);
+                                    }
                                 }
                             }
                             BitShape::Octagon => {
-                                let center = Pos2::new(
-                                    x + self.bit_size / 2.0,
-                                    y + self.bit_size / 2.0,
-                                );
-                                let radius = self.bit_size / 2.0;
-                                
-                                // Calculate octagon vertices (8 points)
-                                let angle_offset = std::f32::consts::PI / 8.0; // Start at 22.5 degrees for flat top/bottom
-                                let mut points = Vec::new();
-                                for i in 0..8 {
-                                    let angle = angle_offset + (i as f32) * std::f32::consts::PI / 4.0;
-                                    points.push(Pos2::new(
-                                        center.x + radius * angle.cos(),
-                                        center.y + radius * angle.sin(),
-                                    ));
+                                let cx = x + half;
+                                let cy = y + half;
+
+                                // Fan: center + 8 vertices
+                                let base = fill_mesh.vertices.len() as u32;
+                                fill_mesh.colored_vertex(Pos2::new(cx, cy), color);
+                                for &(dx, dy) in &octagon_offsets {
+                                    fill_mesh.colored_vertex(Pos2::new(cx + dx, cy + dy), color);
                                 }
-                                
-                                // Draw filled octagon
-                                painter.add(egui::Shape::convex_polygon(
-                                    points.clone(),
-                                    color,
-                                    Stroke::NONE,
-                                ));
-                                
-                                // Draw highlight overlay if this bit is highlighted
-                                if self.highlighted_bits.contains(&bit_index) {
-                                    painter.add(egui::Shape::convex_polygon(
-                                        points.clone(),
-                                        Color32::from_rgba_unmultiplied(255, 255, 0, 150),
-                                        Stroke::NONE,
-                                    ));
+                                for i in 0..8u32 {
+                                    fill_mesh.add_triangle(base, base + 1 + i, base + 1 + (i + 1) % 8);
                                 }
-                                
+
+                                if is_highlighted {
+                                    let hb = highlight_mesh.vertices.len() as u32;
+                                    highlight_mesh.colored_vertex(Pos2::new(cx, cy), highlight_color);
+                                    for &(dx, dy) in &octagon_offsets {
+                                        highlight_mesh.colored_vertex(Pos2::new(cx + dx, cy + dy), highlight_color);
+                                    }
+                                    for i in 0..8u32 {
+                                        highlight_mesh.add_triangle(hb, hb + 1 + i, hb + 1 + (i + 1) % 8);
+                                    }
+                                }
+
                                 if self.show_grid {
-                                    // Draw octagon outline
-                                    painter.add(egui::Shape::convex_polygon(
-                                        points,
-                                        Color32::TRANSPARENT,
-                                        Stroke::new(1.0, Color32::GRAY),
-                                    ));
+                                    // Ring mesh: 16 vertices, 16 triangles per octagon outline
+                                    let ob = outline_mesh.vertices.len() as u32;
+                                    for &(ox, oy, ix, iy) in &octagon_outline_ring {
+                                        outline_mesh.colored_vertex(Pos2::new(cx + ox, cy + oy), outline_color);
+                                        outline_mesh.colored_vertex(Pos2::new(cx + ix, cy + iy), outline_color);
+                                    }
+                                    for i in 0..8u32 {
+                                        let next = (i + 1) % 8;
+                                        outline_mesh.add_triangle(ob + i * 2, ob + i * 2 + 1, ob + next * 2 + 1);
+                                        outline_mesh.add_triangle(ob + i * 2, ob + next * 2 + 1, ob + next * 2);
+                                    }
                                 }
                             }
                         }
                     }
                 }
+
+                // Submit batched meshes (1-3 draw calls for ALL visible shapes)
+                if !fill_mesh.vertices.is_empty() {
+                    painter.add(egui::Shape::mesh(fill_mesh));
+                }
+                if !highlight_mesh.vertices.is_empty() {
+                    painter.add(egui::Shape::mesh(highlight_mesh));
+                }
+                if !outline_mesh.vertices.is_empty() {
+                    painter.add(egui::Shape::mesh(outline_mesh));
+                }
+
+                // Draw grid as continuous lines for Square shape
+                if self.show_grid && matches!(self.shape, BitShape::Square) && end_row > start_row && end_col > start_col {
+                    let h_interval = self.thick_grid_interval_horizontal;
+                    let v_interval = self.thick_grid_interval_vertical;
+                    let h_spacing = self.thick_grid_spacing_horizontal;
+                    let v_spacing = self.thick_grid_spacing_vertical;
+
+                    let y_top = response.rect.min.y + calc_position(start_row, v_interval, v_spacing);
+                    let y_bottom = response.rect.min.y + calc_position(end_row - 1, v_interval, v_spacing) + self.bit_size;
+                    let x_left = response.rect.min.x + calc_position(start_col, h_interval, h_spacing);
+                    let x_right = response.rect.min.x + calc_position(end_col - 1, h_interval, h_spacing) + self.bit_size;
+
+                    // Vertical lines: left edge of each visible column
+                    for col in start_col..end_col {
+                        let x = response.rect.min.x + calc_position(col, h_interval, h_spacing);
+                        let stroke = if h_interval > 0 && col % h_interval == 0 { thick_grid_stroke } else { grid_stroke };
+                        painter.line_segment([Pos2::new(x, y_top), Pos2::new(x, y_bottom)], stroke);
+                    }
+                    // Right edge of last visible column
+                    painter.line_segment([Pos2::new(x_right, y_top), Pos2::new(x_right, y_bottom)], grid_stroke);
+
+                    // Horizontal lines: top edge of each visible row
+                    for row in start_row..end_row {
+                        let y = response.rect.min.y + calc_position(row, v_interval, v_spacing);
+                        let stroke = if v_interval > 0 && row % v_interval == 0 { thick_grid_stroke } else { grid_stroke };
+                        painter.line_segment([Pos2::new(x_left, y), Pos2::new(x_right, y)], stroke);
+                    }
+                    // Bottom edge of last visible row
+                    painter.line_segment([Pos2::new(x_left, y_bottom), Pos2::new(x_right, y_bottom)], grid_stroke);
+                }
+
+                // Draw selection overlay as a single rectangle
+                if let Some(ref sr) = sel_rect {
+                    // Clamp selection to visible rows/cols
+                    let vis_col_start = sr.col_start.max(start_col);
+                    let vis_col_end = (sr.col_end + 1).min(end_col);
+                    let vis_row_start = sr.row_start.max(start_row);
+                    let vis_row_end = (sr.row_end + 1).min(end_row);
+
+                    if vis_col_start < vis_col_end && vis_row_start < vis_row_end {
+                        let x_start = response.rect.min.x + calc_position(vis_col_start, self.thick_grid_interval_horizontal, self.thick_grid_spacing_horizontal);
+                        let y_start = response.rect.min.y + calc_position(vis_row_start, self.thick_grid_interval_vertical, self.thick_grid_spacing_vertical);
+                        let x_end = response.rect.min.x + calc_position(vis_col_end - 1, self.thick_grid_interval_horizontal, self.thick_grid_spacing_horizontal) + self.bit_size;
+                        let y_end = response.rect.min.y + calc_position(vis_row_end - 1, self.thick_grid_interval_vertical, self.thick_grid_spacing_vertical) + self.bit_size;
+
+                        let sel_screen_rect = Rect::from_min_max(
+                            Pos2::new(x_start, y_start),
+                            Pos2::new(x_end, y_end),
+                        );
+                        let selection_color = Color32::from_rgba_unmultiplied(70, 130, 255, 80);
+                        painter.rect_filled(sel_screen_rect, 0.0, selection_color);
+                        painter.rect_stroke(
+                            sel_screen_rect,
+                            0.0,
+                            Stroke::new(2.0, Color32::from_rgb(70, 130, 255)),
+                            egui::epaint::StrokeKind::Middle,
+                        );
+                    }
+                }
             });
+
+        // Apply selection changes after the closure (avoids borrow conflicts)
+        if let Some(bit_idx) = drag_started {
+            selection.begin_drag(bit_idx);
+        }
+        if let Some(bit_idx) = drag_updated {
+            selection.update_drag(bit_idx);
+        }
+        if drag_stopped {
+            selection.end_drag();
+        }
 
         // Convert actual scroll Y back to a row index
         let actual_scroll_y = output.state.offset.y;

@@ -440,6 +440,212 @@ mod bit_operation_tests {
 }
 
 #[cfg(test)]
+mod isolate_bits_tests {
+    use super::*;
+
+    #[test]
+    fn test_isolate_basic() {
+        // 3 rows of 4 bits: 1010 | 0110 | 1100
+        let input = bitvec![u8, Msb0; 1,0,1,0, 0,1,1,0, 1,1,0,0];
+        let op = BitOperation::IsolateBits {
+            inner: bit::operations::isolate::IsolateBitsOperation {
+                name: "test".to_string(),
+                start_col: 1,
+                width: 2,
+                start_row: 0,
+                end_row: 3,
+                source_frame_length: 4,
+                enabled: true,
+            },
+        };
+        let result = op.apply(input);
+        // Row 0 cols 1-2: 0,1
+        // Row 1 cols 1-2: 1,1
+        // Row 2 cols 1-2: 1,0
+        assert_eq!(result, bitvec![u8, Msb0; 0,1, 1,1, 1,0]);
+    }
+
+    #[test]
+    fn test_isolate_single_column() {
+        let input = bitvec![u8, Msb0; 1,0,1,0, 0,1,1,0];
+        let op = BitOperation::IsolateBits {
+            inner: bit::operations::isolate::IsolateBitsOperation {
+                name: "test".to_string(),
+                start_col: 2,
+                width: 1,
+                start_row: 0,
+                end_row: 2,
+                source_frame_length: 4,
+                enabled: true,
+            },
+        };
+        let result = op.apply(input);
+        // Row 0 col 2: 1
+        // Row 1 col 2: 1
+        assert_eq!(result, bitvec![u8, Msb0; 1, 1]);
+    }
+
+    #[test]
+    fn test_isolate_subset_of_rows() {
+        let input = bitvec![u8, Msb0; 1,0,1,0, 0,1,1,0, 1,1,0,0];
+        let op = BitOperation::IsolateBits {
+            inner: bit::operations::isolate::IsolateBitsOperation {
+                name: "test".to_string(),
+                start_col: 0,
+                width: 4,
+                start_row: 1,
+                end_row: 2,
+                source_frame_length: 4,
+                enabled: true,
+            },
+        };
+        let result = op.apply(input);
+        // Only row 1: 0,1,1,0
+        assert_eq!(result, bitvec![u8, Msb0; 0,1,1,0]);
+    }
+
+    #[test]
+    fn test_isolate_empty_input() {
+        let input = BitVec::<u8, Msb0>::new();
+        let op = BitOperation::IsolateBits {
+            inner: bit::operations::isolate::IsolateBitsOperation {
+                name: "test".to_string(),
+                start_col: 0,
+                width: 4,
+                start_row: 0,
+                end_row: 10,
+                source_frame_length: 8,
+                enabled: true,
+            },
+        };
+        let result = op.apply(input);
+        assert_eq!(result.len(), 0);
+    }
+
+    #[test]
+    fn test_isolate_description() {
+        let op = BitOperation::IsolateBits {
+            inner: bit::operations::isolate::IsolateBitsOperation {
+                name: "test".to_string(),
+                start_col: 5,
+                width: 3,
+                start_row: 0,
+                end_row: 5,
+                source_frame_length: 10,
+                enabled: true,
+            },
+        };
+        assert!(op.description().contains("Isolate"));
+        assert!(op.description().contains("5"));
+        assert!(op.description().contains("7"));
+    }
+}
+
+#[cfg(test)]
+mod exclude_bits_tests {
+    use super::*;
+
+    #[test]
+    fn test_exclude_basic() {
+        // 3 rows of 4 bits: 1010 | 0110 | 1100
+        let input = bitvec![u8, Msb0; 1,0,1,0, 0,1,1,0, 1,1,0,0];
+        let op = BitOperation::ExcludeBits {
+            inner: bit::operations::exclude::ExcludeBitsOperation {
+                name: "test".to_string(),
+                start_col: 1,
+                width: 2,
+                start_row: 0,
+                end_row: 3,
+                source_frame_length: 4,
+                enabled: true,
+            },
+        };
+        let result = op.apply(input);
+        // Row 0: keep cols 0,3 -> 1,0
+        // Row 1: keep cols 0,3 -> 0,0
+        // Row 2: keep cols 0,3 -> 1,0
+        assert_eq!(result, bitvec![u8, Msb0; 1,0, 0,0, 1,0]);
+    }
+
+    #[test]
+    fn test_exclude_partial_rows() {
+        // Only exclude from rows 1-2 (not row 0)
+        let input = bitvec![u8, Msb0; 1,0,1,0, 0,1,1,0, 1,1,0,0];
+        let op = BitOperation::ExcludeBits {
+            inner: bit::operations::exclude::ExcludeBitsOperation {
+                name: "test".to_string(),
+                start_col: 1,
+                width: 2,
+                start_row: 1,
+                end_row: 3,
+                source_frame_length: 4,
+                enabled: true,
+            },
+        };
+        let result = op.apply(input);
+        // Row 0 (unaffected): 1,0,1,0
+        // Row 1 (exclude cols 1-2): 0,0
+        // Row 2 (exclude cols 1-2): 1,0
+        assert_eq!(result, bitvec![u8, Msb0; 1,0,1,0, 0,0, 1,0]);
+    }
+
+    #[test]
+    fn test_exclude_no_affected_rows() {
+        let input = bitvec![u8, Msb0; 1,0,1,0, 0,1,1,0];
+        let op = BitOperation::ExcludeBits {
+            inner: bit::operations::exclude::ExcludeBitsOperation {
+                name: "test".to_string(),
+                start_col: 0,
+                width: 2,
+                start_row: 10,
+                end_row: 20,
+                source_frame_length: 4,
+                enabled: true,
+            },
+        };
+        let result = op.apply(input.clone());
+        // No rows affected, output unchanged
+        assert_eq!(result, input);
+    }
+
+    #[test]
+    fn test_exclude_empty_input() {
+        let input = BitVec::<u8, Msb0>::new();
+        let op = BitOperation::ExcludeBits {
+            inner: bit::operations::exclude::ExcludeBitsOperation {
+                name: "test".to_string(),
+                start_col: 0,
+                width: 4,
+                start_row: 0,
+                end_row: 10,
+                source_frame_length: 8,
+                enabled: true,
+            },
+        };
+        let result = op.apply(input);
+        assert_eq!(result.len(), 0);
+    }
+
+    #[test]
+    fn test_exclude_description() {
+        let op = BitOperation::ExcludeBits {
+            inner: bit::operations::exclude::ExcludeBitsOperation {
+                name: "test".to_string(),
+                start_col: 5,
+                width: 3,
+                start_row: 0,
+                end_row: 5,
+                source_frame_length: 10,
+                enabled: true,
+            },
+        };
+        assert!(op.description().contains("Exclude"));
+        assert!(op.description().contains("5"));
+        assert!(op.description().contains("7"));
+    }
+}
+
+#[cfg(test)]
 mod edge_cases_tests {
     use super::*;
 

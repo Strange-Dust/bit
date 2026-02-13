@@ -127,6 +127,12 @@ fn handle_keyboard_shortcuts(app: &mut BitApp, ctx: &egui::Context) {
             app.viewer.reset_zoom();
         }
 
+        // Escape - clear selection and context menu
+        if i.key_pressed(egui::Key::Escape) {
+            app.selection.clear();
+            app.show_context_menu = false;
+        }
+
         // Only handle non-text shortcuts when text input is not focused
         if !text_edit_focused {
             // 1, 2, 3 - Switch view modes (Bit, Byte, ASCII)
@@ -469,6 +475,9 @@ impl eframe::App for BitApp {
 
         // Render central panel
         render_central_panel(self, ctx);
+
+        // Render selection context menu
+        render_selection_context_menu(self, ctx);
 
         // Render toast notifications on top of everything
         render_toasts(self, ctx);
@@ -1136,6 +1145,22 @@ fn render_bottom_panel(app: &mut BitApp, ctx: &egui::Context) {
             ui.label(format!("({} chars in ASCII view)", app.viewer.frame_length / 8));
             ui.separator();
             ui.label(format!("Bit offset: {}", app.view_bit_offset));
+
+            // Show selection info
+            if app.selection.is_active {
+                let rect = app.selection.rect(app.viewer.frame_length);
+                ui.separator();
+                ui.colored_label(
+                    egui::Color32::from_rgb(70, 130, 255),
+                    format!(
+                        "Selected: {}x{} ({} bits) | cols {}-{}, rows {}-{}",
+                        rect.width(), rect.height(), rect.total_bits(),
+                        rect.col_start, rect.col_end,
+                        rect.row_start, rect.row_end,
+                    ),
+                );
+            }
+
             ui.separator();
             ui.weak("L/R: +/-1 bit  |  Up/Down: +/-1 row  |  Home: reset  |  Ctrl+G: go to offset");
         });
@@ -1231,7 +1256,7 @@ fn render_central_panel(app: &mut BitApp, ctx: &egui::Context) {
             // Each viewer returns the effective bit_offset (may differ if user dragged scrollbar)
             match app.view_mode {
                 ViewMode::Bit => {
-                    app.view_bit_offset = app.viewer.show(ui, app.view_bit_offset);
+                    app.view_bit_offset = app.viewer.show(ui, app.view_bit_offset, &mut app.selection);
                 }
                 ViewMode::Byte => {
                     app.view_bit_offset = app.byte_viewer.render_with_patterns(
@@ -1247,6 +1272,16 @@ fn render_central_panel(app: &mut BitApp, ctx: &egui::Context) {
                         &app.patterns,
                         &mut app.last_ascii_bit_offset,
                     );
+                }
+            }
+
+            // Context menu on right-click with active selection
+            if app.selection.is_active && !app.selection.is_dragging {
+                if ui.input(|i| i.pointer.secondary_clicked()) {
+                    if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {
+                        app.show_context_menu = true;
+                        app.context_menu_pos = Some(pos);
+                    }
                 }
             }
         }
@@ -1505,6 +1540,140 @@ fn render_save_template_dialog(app: &mut BitApp, ctx: &egui::Context) {
                     }
                 });
             });
+    }
+}
+
+fn render_selection_context_menu(app: &mut BitApp, ctx: &egui::Context) {
+    if !app.show_context_menu || !app.selection.is_active {
+        app.show_context_menu = false;
+        return;
+    }
+
+    let pos = match app.context_menu_pos {
+        Some(p) => p,
+        None => return,
+    };
+
+    let frame_length = app.viewer.frame_length;
+    let rect = app.selection.rect(frame_length);
+
+    // Close menu if user clicks elsewhere
+    let clicked_outside = ctx.input(|i| {
+        i.pointer.primary_clicked() || i.key_pressed(egui::Key::Escape)
+    });
+
+    let mut close_menu = clicked_outside;
+    let mut action: Option<&str> = None;
+
+    egui::Area::new(egui::Id::new("selection_context_menu"))
+        .fixed_pos(pos)
+        .order(egui::Order::Foreground)
+        .show(ctx, |ui| {
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                ui.set_min_width(220.0);
+
+                // Header
+                ui.label(
+                    egui::RichText::new(format!(
+                        "Selection: {}x{} ({} bits)",
+                        rect.width(), rect.height(), rect.total_bits()
+                    ))
+                    .strong()
+                    .color(egui::Color32::from_rgb(70, 130, 255)),
+                );
+                ui.label(format!("Cols {}-{}, Rows {}-{}", rect.col_start, rect.col_end, rect.row_start, rect.row_end));
+                ui.separator();
+
+                if ui.button("Isolate (keep selected)").clicked() {
+                    action = Some("isolate");
+                    close_menu = true;
+                }
+
+                if ui.button("Exclude (remove selected)").clicked() {
+                    action = Some("exclude");
+                    close_menu = true;
+                }
+
+                if ui.button("Save selection to file").clicked() {
+                    action = Some("save");
+                    close_menu = true;
+                }
+            });
+        });
+
+    // Process action after UI rendering
+    match action {
+        Some("isolate") => {
+            let operation = crate::operations::BitOperation::IsolateBits {
+                inner: crate::operations::isolate::IsolateBitsOperation {
+                    name: format!("Isolate cols {}-{}", rect.col_start, rect.col_end),
+                    start_col: rect.col_start,
+                    width: rect.width(),
+                    start_row: rect.row_start,
+                    end_row: rect.row_end + 1, // exclusive
+                    source_frame_length: frame_length,
+                    enabled: true,
+                },
+            };
+            app.operations.push(operation);
+            app.viewer.frame_length = rect.width();
+            app.settings.frame_length = rect.width();
+            app.settings.auto_save();
+            app.mark_unsaved();
+            app.apply_operations();
+            app.selection.clear();
+        }
+        Some("exclude") => {
+            let operation = crate::operations::BitOperation::ExcludeBits {
+                inner: crate::operations::exclude::ExcludeBitsOperation {
+                    name: format!("Exclude cols {}-{}", rect.col_start, rect.col_end),
+                    start_col: rect.col_start,
+                    width: rect.width(),
+                    start_row: rect.row_start,
+                    end_row: rect.row_end + 1, // exclusive
+                    source_frame_length: frame_length,
+                    enabled: true,
+                },
+            };
+            app.operations.push(operation);
+            app.mark_unsaved();
+            app.apply_operations();
+            app.selection.clear();
+        }
+        Some("save") => {
+            let bits_to_display = if app.show_original {
+                &app.original_bits
+            } else {
+                &app.processed_bits
+            };
+            let selected_indices = app.selection.selected_bits(frame_length, bits_to_display.len());
+            let mut selected_bits = bitvec::prelude::BitVec::<u8, bitvec::prelude::Msb0>::new();
+            for &idx in &selected_indices {
+                if idx < bits_to_display.len() {
+                    selected_bits.push(bits_to_display[idx]);
+                }
+            }
+            if let Some(path) = rfd::FileDialog::new().save_file() {
+                match crate::storage::write_bits_to_file(&path, &selected_bits) {
+                    Ok(_) => {
+                        app.show_success(format!(
+                            "Saved {} selected bits to {}",
+                            selected_bits.len(),
+                            path.file_name().unwrap_or_default().to_string_lossy()
+                        ));
+                    }
+                    Err(e) => {
+                        app.show_error(format!("Failed to save: {}", e), true);
+                    }
+                }
+            }
+            app.selection.clear();
+        }
+        _ => {}
+    }
+
+    if close_menu {
+        app.show_context_menu = false;
     }
 }
 
