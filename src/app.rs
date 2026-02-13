@@ -112,6 +112,7 @@ pub struct BitApp {
 
     // Bit offset (shared across all views)
     pub view_bit_offset: usize,
+    pub last_ascii_bit_offset: Option<usize>,
     pub show_goto_offset_dialog: bool,
     pub goto_offset_input: String,
     pub goto_offset_format: GotoOffsetFormat,
@@ -261,6 +262,7 @@ impl Default for BitApp {
             template_name_buffer: String::new(),
             operations_search_text: String::new(),
             view_bit_offset: 0,
+            last_ascii_bit_offset: None,
             show_goto_offset_dialog: false,
             goto_offset_input: String::new(),
             goto_offset_format: GotoOffsetFormat::Bit,
@@ -964,12 +966,21 @@ impl BitApp {
         self.editor_state = None;
     }
     
-    pub fn render_ascii_view(&self, ui: &mut eframe::egui::Ui, bits: &BitVec<u8, Msb0>, bit_offset: usize, scroll_to_y: Option<f32>) -> f32 {
+    pub fn render_ascii_view(
+        ui: &mut eframe::egui::Ui,
+        bits: &BitVec<u8, Msb0>,
+        bit_offset: usize,
+        frame_length: usize,
+        byte_size: f32,
+        show_hex_offset: bool,
+        patterns: &[crate::analysis::Pattern],
+        last_bit_offset: &mut Option<usize>,
+    ) -> usize {
         use eframe::egui;
 
         if bits.is_empty() {
             ui.label("No data to display");
-            return 0.0;
+            return bit_offset;
         }
 
         // Predefined colors for different patterns (same as byte viewer)
@@ -984,25 +995,28 @@ impl BitApp {
             egui::Color32::from_rgb(150, 100, 255),  // Purple
         ];
 
-        // Calculate total size WITHOUT converting all bits
+        // Calculate total size for ALL data (aligned to sub_row)
         let total_bits = bits.len();
-        let effective_bits = total_bits.saturating_sub(bit_offset);
+        let chars_per_row = frame_length / 8;
+        let bits_per_row = chars_per_row * 8;
+        let sub_row = bit_offset % bits_per_row;
+        let effective_bits = total_bits.saturating_sub(sub_row);
         let total_bytes = (effective_bits + 7) / 8;
-        
-        // Use frame_length (in bits) to determine characters per row
-        // Each character represents 8 bits (1 byte)
-        let chars_per_row = self.viewer.frame_length / 8;
         let total_rows = (total_bytes + chars_per_row - 1) / chars_per_row;
-        
-        let char_width = 12.0;
-        let char_height = 20.0;
-        let offset_width = if self.byte_viewer.config.show_hex_offset { 90.0 } else { 0.0 };
-        
+        let offset_row = bit_offset / bits_per_row;
+
+        let char_width = byte_size * 0.6;
+        let char_height = byte_size * 1.25;
+        let offset_width = if show_hex_offset { 90.0 } else { 0.0 };
+
         let mut scroll_area = egui::ScrollArea::vertical()
             .id_salt("ascii_viewer_scroll")
             .auto_shrink([false, false]);
-        if let Some(y) = scroll_to_y {
-            scroll_area = scroll_area.vertical_scroll_offset(y);
+
+        // Only force scroll when bit_offset changed externally
+        if *last_bit_offset != Some(bit_offset) {
+            let expected_scroll_y = offset_row as f32 * char_height;
+            scroll_area = scroll_area.vertical_scroll_offset(expected_scroll_y);
         }
         let output = scroll_area.show_rows(
                 ui,
@@ -1023,7 +1037,7 @@ impl BitApp {
                             for row in row_range {
                                 ui.horizontal(|ui| {
                                     // Show offset if enabled
-                                    if self.byte_viewer.config.show_hex_offset {
+                                    if show_hex_offset {
                                         let offset = row * chars_per_row;
                                         ui.add_sized(
                                             [offset_width, char_height],
@@ -1038,11 +1052,14 @@ impl BitApp {
                                     // Draw ASCII characters - only convert bytes we need for this row
                                     let row_start = row * chars_per_row;
                                     let row_end = (row_start + chars_per_row).min(total_bytes);
-                                    
+
                                     for byte_idx in row_start..row_end {
                                         // Convert only this single byte from bits
-                                        let bit_start = bit_offset + byte_idx * 8;
+                                        let bit_start = sub_row + byte_idx * 8;
                                         let bit_end = (bit_start + 8).min(total_bits);
+                                        if bit_start >= total_bits {
+                                            break;
+                                        }
                                         let byte_bits = &bits[bit_start..bit_end];
                                         
                                         let mut byte = 0u8;
@@ -1054,7 +1071,7 @@ impl BitApp {
                                         
                                         // Check if this byte is part of any pattern match
                                         let mut pattern_match: Option<(egui::Color32, String)> = None;
-                                        for (pattern_idx, pattern) in self.patterns.iter().enumerate() {
+                                        for (pattern_idx, pattern) in patterns.iter().enumerate() {
                                             for match_info in &pattern.matches {
                                                 let match_start = match_info.position;
                                                 let match_end = match_info.position + pattern.bits.len();
@@ -1110,7 +1127,7 @@ impl BitApp {
                                             rect.center(),
                                             egui::Align2::CENTER_CENTER,
                                             ch,
-                                            egui::FontId::monospace(16.0),
+                                            egui::FontId::monospace(byte_size),
                                             text_color
                                         );
                                         
@@ -1134,7 +1151,13 @@ impl BitApp {
                         });
                 },
             );
-        output.state.offset.y
+
+        // Convert scroll Y back to row and derive effective bit offset
+        let actual_scroll_y = output.state.offset.y;
+        let actual_row = (actual_scroll_y / char_height).round() as usize;
+        let effective_bit_offset = actual_row * bits_per_row + sub_row;
+        *last_bit_offset = Some(effective_bit_offset);
+        effective_bit_offset
     }
 
     /// Run frame width analysis on the current bits

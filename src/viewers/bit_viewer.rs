@@ -23,6 +23,7 @@ pub struct BitViewer {
     pub thick_grid_spacing_vertical: f32,
     pub highlighted_bits: HashSet<usize>,
     pub jump_to_bit: Option<usize>,
+    last_bit_offset: Option<usize>,
 }
 
 impl BitViewer {
@@ -40,6 +41,7 @@ impl BitViewer {
             thick_grid_spacing_vertical: 3.0,
             highlighted_bits: HashSet::new(),
             jump_to_bit: None,
+            last_bit_offset: None,
         }
     }
 
@@ -61,29 +63,41 @@ impl BitViewer {
         self.jump_to_bit = Some(bit_position);
     }
 
-    pub fn show(&mut self, ui: &mut egui::Ui, bit_offset: usize, scroll_to_y: Option<f32>) -> f32 {
-        // Calculate total content size
-        let total_bits = self.bits.len().saturating_sub(bit_offset);
-        let total_rows = (total_bits + self.frame_length - 1) / self.frame_length;
+    pub fn show(&mut self, ui: &mut egui::Ui, bit_offset: usize) -> usize {
+        let frame_length = self.frame_length;
+        let sub_row = bit_offset % frame_length;
+        // Total rows covering all data (aligned to sub_row)
+        let total_bits = self.bits.len().saturating_sub(sub_row);
+        let total_rows = if total_bits > 0 { (total_bits + frame_length - 1) / frame_length } else { 0 };
+        let offset_row = bit_offset / frame_length;
         let cell_size = self.bit_size + self.bit_spacing;
         // Add padding to prevent scrollbar from covering content
         let padding = 20.0;
-        
+
         // Calculate extra spacing from thick grid intervals
         let extra_width_spacing = if self.thick_grid_interval_horizontal > 0 {
-            ((self.frame_length / self.thick_grid_interval_horizontal) as f32) * self.thick_grid_spacing_horizontal
+            ((frame_length / self.thick_grid_interval_horizontal) as f32) * self.thick_grid_spacing_horizontal
         } else {
             0.0
         };
-        
-        let extra_height_spacing = if self.thick_grid_interval_vertical > 0 {
+
+        let extra_height_spacing = if self.thick_grid_interval_vertical > 0 && total_rows > 0 {
             ((total_rows / self.thick_grid_interval_vertical) as f32) * self.thick_grid_spacing_vertical
         } else {
             0.0
         };
-        
-        let content_width = (self.frame_length as f32) * cell_size + padding + extra_width_spacing;
+
+        let content_width = (frame_length as f32) * cell_size + padding + extra_width_spacing;
         let content_height = (total_rows as f32) * cell_size + padding + extra_height_spacing;
+
+        // Helper to convert row index to Y position (accounting for thick grid spacing)
+        let calc_y_position = |row: usize| -> f32 {
+            if self.thick_grid_interval_vertical > 0 && row > 0 {
+                (row as f32) * cell_size + (row / self.thick_grid_interval_vertical) as f32 * self.thick_grid_spacing_vertical
+            } else {
+                (row as f32) * cell_size
+            }
+        };
 
         // Set scrollbar to always be expanded (no hover animation)
         ui.style_mut().spacing.scroll.bar_width = 8.0;
@@ -95,16 +109,23 @@ impl BitViewer {
         let mut scroll_area = egui::ScrollArea::both()
             .auto_shrink([false, false])
             .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible);
-        
-        // Handle jump to bit position
+
+        // Handle jump to bit position (takes priority)
         if let Some(bit_pos) = self.jump_to_bit.take() {
-            let adjusted_pos = bit_pos.saturating_sub(bit_offset);
-            let row = adjusted_pos / self.frame_length;
-            let y_offset = (row as f32) * cell_size;
-            scroll_area = scroll_area.vertical_scroll_offset(y_offset);
-        } else if let Some(y) = scroll_to_y {
-            scroll_area = scroll_area.vertical_scroll_offset(y);
+            let target_row = if bit_pos > sub_row {
+                (bit_pos - sub_row) / frame_length
+            } else {
+                0
+            };
+            scroll_area = scroll_area.vertical_scroll_offset(calc_y_position(target_row));
+        } else if self.last_bit_offset != Some(bit_offset) {
+            // bit_offset changed externally (keyboard, mouse wheel) — set scroll to match
+            scroll_area = scroll_area.vertical_scroll_offset(calc_y_position(offset_row));
         }
+        // Otherwise: don't set scroll, let the scroll area be free (user can drag scrollbar)
+
+        let thick_v = self.thick_grid_interval_vertical;
+        let thick_v_spacing = self.thick_grid_spacing_vertical;
 
         let output = scroll_area.show_viewport(ui, |ui, viewport| {
                 // Set the content size
@@ -159,11 +180,11 @@ impl BitViewer {
                 };
 
                 // Binary search for start col
-                let start_col = if self.frame_length == 0 {
+                let start_col = if frame_length == 0 {
                     0
                 } else {
                     let mut low = 0;
-                    let mut high = self.frame_length;
+                    let mut high = frame_length;
                     while low < high {
                         let mid = (low + high) / 2;
                         let pos = calc_position(mid, self.thick_grid_interval_horizontal, self.thick_grid_spacing_horizontal);
@@ -177,24 +198,24 @@ impl BitViewer {
                 };
 
                 // Find end col
-                let end_col = if self.frame_length == 0 {
+                let end_col = if frame_length == 0 {
                     0
                 } else {
                     let mut col = start_col;
-                    while col < self.frame_length {
+                    while col < frame_length {
                         let pos = calc_position(col, self.thick_grid_interval_horizontal, self.thick_grid_spacing_horizontal);
                         if pos > viewport.max.x + cell_size {
                             break;
                         }
                         col += 1;
                     }
-                    col.min(self.frame_length)
+                    col.min(frame_length)
                 };
 
                 // Only render visible bits
                 for row in start_row..end_row {
                     for col in start_col..end_col {
-                        let bit_index = bit_offset + row * self.frame_length + col;
+                        let bit_index = sub_row + row * frame_length + col;
                         if bit_index >= self.bits.len() {
                             break;
                         }
@@ -334,7 +355,23 @@ impl BitViewer {
                     }
                 }
             });
-        output.state.offset.y
+
+        // Convert actual scroll Y back to a row index
+        let actual_scroll_y = output.state.offset.y;
+        let actual_row = if thick_v > 0 && thick_v_spacing > 0.0 {
+            // Invert the thick grid spacing: each group of `interval` rows = interval*cell_size + spacing
+            let group_height = thick_v as f32 * cell_size + thick_v_spacing;
+            let group = (actual_scroll_y / group_height) as usize;
+            let remainder = actual_scroll_y - group as f32 * group_height;
+            let row_in_group = (remainder / cell_size).min(thick_v as f32 - 1.0).max(0.0) as usize;
+            (group * thick_v + row_in_group).min(total_rows.saturating_sub(1))
+        } else {
+            (actual_scroll_y / cell_size).max(0.0) as usize
+        };
+
+        let effective_bit_offset = actual_row * frame_length + sub_row;
+        self.last_bit_offset = Some(effective_bit_offset);
+        effective_bit_offset
     }
 
     pub fn zoom_in(&mut self) {

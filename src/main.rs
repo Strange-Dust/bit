@@ -223,17 +223,14 @@ impl eframe::App for BitApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
 
-        // Handle Ctrl+Shift+Mouse Wheel for font size adjustment
+        // Handle Ctrl+Shift+Scroll for font size adjustment
+        // Note: egui-winit converts Ctrl+Scroll into zoom_delta(), so we use that
         let mut font_size_changed = false;
         ctx.input(|i| {
-            let ctrl_shift_held = i.modifiers.ctrl && i.modifiers.shift;
-
-            if ctrl_shift_held {
-                let delta = i.smooth_scroll_delta.y + i.raw_scroll_delta.y;
-
-                if delta.abs() > 0.01 {
-                    let sensitivity = 0.1;
-                    self.font_size = (self.font_size + delta * sensitivity).clamp(8.0, 24.0);
+            if i.modifiers.shift {
+                let zoom = i.zoom_delta();
+                if (zoom - 1.0).abs() > 0.001 {
+                    self.font_size = (self.font_size * zoom).clamp(8.0, 24.0);
                     font_size_changed = true;
                 }
             }
@@ -1183,32 +1180,42 @@ fn render_central_panel(app: &mut BitApp, ctx: &egui::Context) {
                 ui.heading("Open a file to view its bits");
             });
         } else {
-            // Handle mouse wheel for bit offset navigation (only over central panel)
+            // Handle mouse wheel / zoom over central panel
             let panel_rect = ui.max_rect();
-            let (scroll_y, panel_hovered, has_modifiers) = ui.input(|i| {
+            let (zoom, shift_held, scroll_y, panel_hovered) = ui.input(|i| {
                 let hovered = i.pointer.hover_pos()
                     .map_or(false, |pos| panel_rect.contains(pos));
-                let mods = i.modifiers.ctrl || i.modifiers.shift
-                    || i.modifiers.alt || i.modifiers.command;
-                (i.smooth_scroll_delta.y, hovered, mods)
+                let shift = i.modifiers.shift;
+                (i.zoom_delta(), shift, i.smooth_scroll_delta.y, hovered)
             });
             let text_edit_focused = ctx.memory(|mem| mem.focused().is_some());
-            if !text_edit_focused && panel_hovered && !has_modifiers && scroll_y.abs() > 1.0 {
+
+            if panel_hovered && !shift_held && (zoom - 1.0).abs() > 0.001 {
+                // Ctrl+Scroll (or pinch): zoom in/out view
+                match app.view_mode {
+                    ViewMode::Bit => {
+                        app.viewer.bit_size =
+                            (app.viewer.bit_size * zoom).clamp(2.0, 100.0);
+                    }
+                    ViewMode::Byte | ViewMode::Ascii => {
+                        app.byte_viewer.byte_size =
+                            (app.byte_viewer.byte_size * zoom).clamp(8.0, 60.0);
+                    }
+                }
+            } else if !text_edit_focused && panel_hovered && scroll_y.abs() > 1.0 {
+                // Plain scroll: shift bit offset
                 let row_height = match app.view_mode {
                     ViewMode::Bit => app.viewer.bit_size + app.viewer.bit_spacing,
                     ViewMode::Byte => app.byte_viewer.byte_size * 1.5,
-                    ViewMode::Ascii => 20.0,
+                    ViewMode::Ascii => app.byte_viewer.byte_size * 1.25,
                 };
                 let rows = (scroll_y.abs() / row_height).max(1.0).round() as usize;
                 if scroll_y > 0.0 {
-                    // Scroll up = decrease offset
                     app.view_bit_offset = app.view_bit_offset
                         .saturating_sub(app.viewer.frame_length * rows);
                 } else {
-                    // Scroll down = increase offset
                     app.view_bit_offset += app.viewer.frame_length * rows;
                 }
-                // Consume scroll so viewer scroll areas don't double-scroll
                 ctx.input_mut(|i| {
                     i.smooth_scroll_delta.y = 0.0;
                     i.raw_scroll_delta.y = 0.0;
@@ -1221,21 +1228,24 @@ fn render_central_panel(app: &mut BitApp, ctx: &egui::Context) {
                 &app.processed_bits
             };
 
-            // Always lock scroll to top — all vertical navigation is via view_bit_offset,
-            // which is shared across all views.
-            let scroll = Some(0.0);
+            // Each viewer returns the effective bit_offset (may differ if user dragged scrollbar)
             match app.view_mode {
                 ViewMode::Bit => {
-                    app.viewer.show(ui, app.view_bit_offset, scroll);
+                    app.view_bit_offset = app.viewer.show(ui, app.view_bit_offset);
                 }
                 ViewMode::Byte => {
-                    app.byte_viewer.render_with_patterns(
-                        ui, bits_to_display, &app.patterns, app.view_bit_offset, scroll,
+                    app.view_bit_offset = app.byte_viewer.render_with_patterns(
+                        ui, bits_to_display, &app.patterns, app.view_bit_offset,
                     );
                 }
                 ViewMode::Ascii => {
-                    app.render_ascii_view(
-                        ui, bits_to_display, app.view_bit_offset, scroll,
+                    app.view_bit_offset = BitApp::render_ascii_view(
+                        ui, bits_to_display, app.view_bit_offset,
+                        app.viewer.frame_length,
+                        app.byte_viewer.byte_size,
+                        app.byte_viewer.config.show_hex_offset,
+                        &app.patterns,
+                        &mut app.last_ascii_bit_offset,
                     );
                 }
             }

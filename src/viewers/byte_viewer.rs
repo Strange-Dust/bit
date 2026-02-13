@@ -55,6 +55,7 @@ impl Default for ByteViewConfig {
 pub struct ByteViewer {
     pub config: ByteViewConfig,
     pub byte_size: f32,
+    last_bit_offset: Option<usize>,
 }
 
 impl Default for ByteViewer {
@@ -62,6 +63,7 @@ impl Default for ByteViewer {
         Self {
             config: ByteViewConfig::default(),
             byte_size: 20.0,
+            last_bit_offset: None,
         }
     }
 }
@@ -86,18 +88,21 @@ impl ByteViewer {
     }
 
     /// Render the byte view with pattern highlighting
-    pub fn render_with_patterns(&mut self, ui: &mut egui::Ui, bits: &BitVec<u8, Msb0>, patterns: &[Pattern], bit_offset: usize, scroll_to_y: Option<f32>) -> f32 {
+    pub fn render_with_patterns(&mut self, ui: &mut egui::Ui, bits: &BitVec<u8, Msb0>, patterns: &[Pattern], bit_offset: usize) -> usize {
         if bits.is_empty() {
             ui.label("No data to display");
-            return 0.0;
+            return bit_offset;
         }
 
-        // Calculate total size WITHOUT converting all bits
+        // Calculate total size for ALL data (aligned to sub_row)
         let total_bits = bits.len();
-        let effective_bits = total_bits.saturating_sub(bit_offset);
-        let total_bytes = (effective_bits + 7) / 8;
         let bytes_per_row = self.config.bytes_per_row;
+        let bits_per_row = bytes_per_row * 8;
+        let sub_row = bit_offset % bits_per_row;
+        let effective_bits = total_bits.saturating_sub(sub_row);
+        let total_bytes = (effective_bits + 7) / 8;
         let total_rows = (total_bytes + bytes_per_row - 1) / bytes_per_row;
+        let offset_row = bit_offset / bits_per_row;
 
         // Calculate layout dimensions
         let byte_width = self.byte_size * 2.5;
@@ -112,9 +117,13 @@ impl ByteViewer {
         let mut scroll_area = egui::ScrollArea::vertical()
             .id_salt("byte_viewer_scroll")
             .auto_shrink([false, false]);
-        if let Some(y) = scroll_to_y {
-            scroll_area = scroll_area.vertical_scroll_offset(y);
+
+        // Only force scroll when bit_offset changed externally
+        if self.last_bit_offset != Some(bit_offset) {
+            let expected_scroll_y = offset_row as f32 * byte_height;
+            scroll_area = scroll_area.vertical_scroll_offset(expected_scroll_y);
         }
+
         let output = scroll_area.show_rows(
                 ui,
                 byte_height,
@@ -139,29 +148,32 @@ impl ByteViewer {
                             // Draw bytes - only convert the bytes we need for this row
                             let row_start = row * bytes_per_row;
                             let row_end = (row_start + bytes_per_row).min(total_bytes);
-                            
+
                             for byte_idx in row_start..row_end {
                                 // Convert only this single byte from bits
-                                let bit_start = bit_offset + byte_idx * 8;
+                                let bit_start = sub_row + byte_idx * 8;
                                 let bit_end = (bit_start + 8).min(total_bits);
+                                if bit_start >= total_bits {
+                                    break;
+                                }
                                 let byte_bits = &bits[bit_start..bit_end];
-                                
+
                                 let mut byte = 0u8;
                                 for (i, bit) in byte_bits.iter().enumerate() {
                                     if *bit {
                                         byte |= 1 << (7 - i);
                                     }
                                 }
-                                
+
                                 let local_byte_idx = byte_idx - row_start;
-                                let bit_offset = local_byte_idx * 8;
+                                let local_bit_offset = local_byte_idx * 8;
 
                                 // Check for pattern matches first (higher priority)
                                 let pattern_match = self.find_pattern_match(bit_start, bit_end, patterns);
-                                
+
                                 // Find which column this byte belongs to (lower priority)
                                 let column_color = if pattern_match.is_none() {
-                                    self.find_column_color(bit_offset)
+                                    self.find_column_color(local_bit_offset)
                                 } else {
                                     None
                                 };
@@ -201,7 +213,7 @@ impl ByteViewer {
                                 } else {
                                     Color32::DARK_GRAY
                                 };
-                                
+
                                 ui.painter().text(
                                     rect.center(),
                                     egui::Align2::CENTER_CENTER,
@@ -216,7 +228,7 @@ impl ByteViewer {
                                 } else {
                                     Stroke::new(1.0, Color32::from_gray(100))
                                 };
-                                
+
                                 ui.painter().rect_stroke(
                                     rect,
                                     2.0,
@@ -227,10 +239,10 @@ impl ByteViewer {
                                 // Show tooltip with bit offset and pattern info
                                 if response.hovered() {
                                     response.on_hover_ui(|ui| {
-                                        ui.label(format!("Byte: {}\nBit offset: {}", byte_idx, bit_offset + byte_idx * 8));
+                                        ui.label(format!("Byte: {}\nBit offset: {}", byte_idx, bit_start));
                                         ui.label(format!("Value: 0x{:02X} ({})", byte, byte));
                                         ui.label(format!("Binary: {:08b}", byte));
-                                        
+
                                         if let Some((_, pattern_name)) = pattern_match {
                                             ui.separator();
                                             ui.label(format!("Pattern: {}", pattern_name));
@@ -242,7 +254,13 @@ impl ByteViewer {
                     }
                 },
             );
-        output.state.offset.y
+
+        // Convert scroll Y back to row and derive effective bit offset
+        let actual_scroll_y = output.state.offset.y;
+        let actual_row = (actual_scroll_y / byte_height).round() as usize;
+        let effective_bit_offset = actual_row * bits_per_row + sub_row;
+        self.last_bit_offset = Some(effective_bit_offset);
+        effective_bit_offset
     }
 
     fn render_column_headers(&self, ui: &mut egui::Ui, bytes_per_row: usize, byte_width: f32, offset_width: f32, header_height: f32) {
