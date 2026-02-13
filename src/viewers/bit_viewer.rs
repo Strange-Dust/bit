@@ -61,9 +61,10 @@ impl BitViewer {
         self.jump_to_bit = Some(bit_position);
     }
 
-    pub fn show(&mut self, ui: &mut egui::Ui) {
+    pub fn show(&mut self, ui: &mut egui::Ui, bit_offset: usize, scroll_to_y: Option<f32>) -> f32 {
         // Calculate total content size
-        let total_rows = (self.bits.len() + self.frame_length - 1) / self.frame_length;
+        let total_bits = self.bits.len().saturating_sub(bit_offset);
+        let total_rows = (total_bits + self.frame_length - 1) / self.frame_length;
         let cell_size = self.bit_size + self.bit_spacing;
         // Add padding to prevent scrollbar from covering content
         let padding = 20.0;
@@ -97,12 +98,15 @@ impl BitViewer {
         
         // Handle jump to bit position
         if let Some(bit_pos) = self.jump_to_bit.take() {
-            let row = bit_pos / self.frame_length;
+            let adjusted_pos = bit_pos.saturating_sub(bit_offset);
+            let row = adjusted_pos / self.frame_length;
             let y_offset = (row as f32) * cell_size;
             scroll_area = scroll_area.vertical_scroll_offset(y_offset);
+        } else if let Some(y) = scroll_to_y {
+            scroll_area = scroll_area.vertical_scroll_offset(y);
         }
 
-        scroll_area.show_viewport(ui, |ui, viewport| {
+        let output = scroll_area.show_viewport(ui, |ui, viewport| {
                 // Set the content size
                 ui.set_width(content_width);
                 ui.set_height(content_height);
@@ -190,7 +194,7 @@ impl BitViewer {
                 // Only render visible bits
                 for row in start_row..end_row {
                     for col in start_col..end_col {
-                        let bit_index = row * self.frame_length + col;
+                        let bit_index = bit_offset + row * self.frame_length + col;
                         if bit_index >= self.bits.len() {
                             break;
                         }
@@ -330,6 +334,7 @@ impl BitViewer {
                     }
                 }
             });
+        output.state.offset.y
     }
 
     pub fn zoom_in(&mut self) {

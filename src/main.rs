@@ -63,6 +63,8 @@ fn handle_keyboard_shortcuts(app: &mut BitApp, ctx: &egui::Context) {
                 app.cancel_operation_edit();
             } else if app.show_column_editor {
                 app.show_column_editor = false;
+            } else if app.show_goto_offset_dialog {
+                app.show_goto_offset_dialog = false;
             }
         }
 
@@ -98,6 +100,11 @@ fn handle_keyboard_shortcuts(app: &mut BitApp, ctx: &egui::Context) {
         // Ctrl+F - Open Pattern Locator
         if ctrl && !shift && i.key_pressed(egui::Key::F) {
             app.show_pattern_locator = !app.show_pattern_locator;
+        }
+
+        // Ctrl+G - Go to offset dialog
+        if ctrl && !shift && i.key_pressed(egui::Key::G) {
+            app.show_goto_offset_dialog = !app.show_goto_offset_dialog;
         }
 
         // Ctrl+Comma - Open Settings
@@ -146,6 +153,35 @@ fn handle_keyboard_shortcuts(app: &mut BitApp, ctx: &egui::Context) {
             // For now, this is a placeholder for when we add operation selection
             if i.key_pressed(egui::Key::Space) {
                 // TODO: Toggle selected operation when selection is implemented
+            }
+
+            // Left/Right - Shift bit offset by 1 bit
+            if !ctrl && !shift && i.key_pressed(egui::Key::ArrowRight) {
+                app.view_bit_offset += 1;
+            }
+            if !ctrl && !shift && i.key_pressed(egui::Key::ArrowLeft) {
+                app.view_bit_offset = app.view_bit_offset.saturating_sub(1);
+            }
+
+            // Up/Down - Shift bit offset by one frame_length (one row of bits)
+            if !ctrl && !shift && i.key_pressed(egui::Key::ArrowDown) {
+                app.view_bit_offset += app.viewer.frame_length;
+            }
+            if !ctrl && !shift && i.key_pressed(egui::Key::ArrowUp) {
+                app.view_bit_offset = app.view_bit_offset.saturating_sub(app.viewer.frame_length);
+            }
+
+            // Home - Reset bit offset to 0
+            if !ctrl && !shift && i.key_pressed(egui::Key::Home) {
+                app.view_bit_offset = 0;
+            }
+
+            // PgUp/PgDn - Shift bit offset by 20 rows of bits
+            if !ctrl && !shift && i.key_pressed(egui::Key::PageDown) {
+                app.view_bit_offset += app.viewer.frame_length * 20;
+            }
+            if !ctrl && !shift && i.key_pressed(egui::Key::PageUp) {
+                app.view_bit_offset = app.view_bit_offset.saturating_sub(app.viewer.frame_length * 20);
             }
         }
     });
@@ -432,6 +468,7 @@ impl eframe::App for BitApp {
         render_operation_windows(self, ctx);
         render_column_editor_window(self, ctx);
         render_save_template_dialog(self, ctx);
+        render_goto_offset_dialog(self, ctx);
 
         // Render central panel
         render_central_panel(self, ctx);
@@ -1100,6 +1137,10 @@ fn render_bottom_panel(app: &mut BitApp, ctx: &egui::Context) {
                 app.settings.auto_save();
             }
             ui.label(format!("({} chars in ASCII view)", app.viewer.frame_length / 8));
+            ui.separator();
+            ui.label(format!("Bit offset: {}", app.view_bit_offset));
+            ui.separator();
+            ui.weak("L/R: +/-1 bit  |  Up/Down: +/-1 row  |  Home: reset  |  Ctrl+G: go to offset");
         });
     });
 }
@@ -1142,21 +1183,60 @@ fn render_central_panel(app: &mut BitApp, ctx: &egui::Context) {
                 ui.heading("Open a file to view its bits");
             });
         } else {
+            // Handle mouse wheel for bit offset navigation (only over central panel)
+            let panel_rect = ui.max_rect();
+            let (scroll_y, panel_hovered, has_modifiers) = ui.input(|i| {
+                let hovered = i.pointer.hover_pos()
+                    .map_or(false, |pos| panel_rect.contains(pos));
+                let mods = i.modifiers.ctrl || i.modifiers.shift
+                    || i.modifiers.alt || i.modifiers.command;
+                (i.smooth_scroll_delta.y, hovered, mods)
+            });
+            let text_edit_focused = ctx.memory(|mem| mem.focused().is_some());
+            if !text_edit_focused && panel_hovered && !has_modifiers && scroll_y.abs() > 1.0 {
+                let row_height = match app.view_mode {
+                    ViewMode::Bit => app.viewer.bit_size + app.viewer.bit_spacing,
+                    ViewMode::Byte => app.byte_viewer.byte_size * 1.5,
+                    ViewMode::Ascii => 20.0,
+                };
+                let rows = (scroll_y.abs() / row_height).max(1.0).round() as usize;
+                if scroll_y > 0.0 {
+                    // Scroll up = decrease offset
+                    app.view_bit_offset = app.view_bit_offset
+                        .saturating_sub(app.viewer.frame_length * rows);
+                } else {
+                    // Scroll down = increase offset
+                    app.view_bit_offset += app.viewer.frame_length * rows;
+                }
+                // Consume scroll so viewer scroll areas don't double-scroll
+                ctx.input_mut(|i| {
+                    i.smooth_scroll_delta.y = 0.0;
+                    i.raw_scroll_delta.y = 0.0;
+                });
+            }
+
             let bits_to_display = if app.show_original {
                 &app.original_bits
             } else {
                 &app.processed_bits
             };
-            
+
+            // Always lock scroll to top — all vertical navigation is via view_bit_offset,
+            // which is shared across all views.
+            let scroll = Some(0.0);
             match app.view_mode {
                 ViewMode::Bit => {
-                    app.viewer.show(ui);
+                    app.viewer.show(ui, app.view_bit_offset, scroll);
                 }
                 ViewMode::Byte => {
-                    app.byte_viewer.render_with_patterns(ui, bits_to_display, &app.patterns);
+                    app.byte_viewer.render_with_patterns(
+                        ui, bits_to_display, &app.patterns, app.view_bit_offset, scroll,
+                    );
                 }
                 ViewMode::Ascii => {
-                    app.render_ascii_view(ui, bits_to_display);
+                    app.render_ascii_view(
+                        ui, bits_to_display, app.view_bit_offset, scroll,
+                    );
                 }
             }
         }
@@ -1351,6 +1431,10 @@ fn render_operation_windows(app: &mut BitApp, ctx: &egui::Context) {
 
 fn render_column_editor_window(app: &mut BitApp, ctx: &egui::Context) {
     crate::ui::windows::render_column_editor_window(app, ctx);
+}
+
+fn render_goto_offset_dialog(app: &mut BitApp, ctx: &egui::Context) {
+    crate::ui::windows::render_goto_offset_dialog(app, ctx);
 }
 
 fn render_save_template_dialog(app: &mut BitApp, ctx: &egui::Context) {

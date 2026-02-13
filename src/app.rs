@@ -109,6 +109,12 @@ pub struct BitApp {
 
     // Operations search/filter
     pub operations_search_text: String,
+
+    // Bit offset (shared across all views)
+    pub view_bit_offset: usize,
+    pub show_goto_offset_dialog: bool,
+    pub goto_offset_input: String,
+    pub goto_offset_format: GotoOffsetFormat,
 }
 
 /// Represents actions that require user confirmation
@@ -137,6 +143,14 @@ pub enum ToastType {
     Success,
     Warning,
     Error,
+}
+
+/// Format options for the Go-to-Offset dialog
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum GotoOffsetFormat {
+    Bit,
+    Byte,
+    Hex,
 }
 
 impl Toast {
@@ -246,6 +260,10 @@ impl Default for BitApp {
             show_save_template_dialog: false,
             template_name_buffer: String::new(),
             operations_search_text: String::new(),
+            view_bit_offset: 0,
+            show_goto_offset_dialog: false,
+            goto_offset_input: String::new(),
+            goto_offset_format: GotoOffsetFormat::Bit,
         }
     }
 }
@@ -946,12 +964,12 @@ impl BitApp {
         self.editor_state = None;
     }
     
-    pub fn render_ascii_view(&self, ui: &mut eframe::egui::Ui, bits: &BitVec<u8, Msb0>) {
+    pub fn render_ascii_view(&self, ui: &mut eframe::egui::Ui, bits: &BitVec<u8, Msb0>, bit_offset: usize, scroll_to_y: Option<f32>) -> f32 {
         use eframe::egui;
-        
+
         if bits.is_empty() {
             ui.label("No data to display");
-            return;
+            return 0.0;
         }
 
         // Predefined colors for different patterns (same as byte viewer)
@@ -968,7 +986,8 @@ impl BitApp {
 
         // Calculate total size WITHOUT converting all bits
         let total_bits = bits.len();
-        let total_bytes = (total_bits + 7) / 8;
+        let effective_bits = total_bits.saturating_sub(bit_offset);
+        let total_bytes = (effective_bits + 7) / 8;
         
         // Use frame_length (in bits) to determine characters per row
         // Each character represents 8 bits (1 byte)
@@ -979,10 +998,13 @@ impl BitApp {
         let char_height = 20.0;
         let offset_width = if self.byte_viewer.config.show_hex_offset { 90.0 } else { 0.0 };
         
-        egui::ScrollArea::vertical()
+        let mut scroll_area = egui::ScrollArea::vertical()
             .id_salt("ascii_viewer_scroll")
-            .auto_shrink([false, false])
-            .show_rows(
+            .auto_shrink([false, false]);
+        if let Some(y) = scroll_to_y {
+            scroll_area = scroll_area.vertical_scroll_offset(y);
+        }
+        let output = scroll_area.show_rows(
                 ui,
                 char_height,
                 total_rows,
@@ -1019,7 +1041,7 @@ impl BitApp {
                                     
                                     for byte_idx in row_start..row_end {
                                         // Convert only this single byte from bits
-                                        let bit_start = byte_idx * 8;
+                                        let bit_start = bit_offset + byte_idx * 8;
                                         let bit_end = (bit_start + 8).min(total_bits);
                                         let byte_bits = &bits[bit_start..bit_end];
                                         
@@ -1052,7 +1074,7 @@ impl BitApp {
                                         let ch = if byte >= 32 && byte <= 126 {
                                             byte as char
                                         } else {
-                                            '.'
+                                            '~'
                                         };
                                         
                                         let (rect, response) = ui.allocate_exact_size(
@@ -1112,8 +1134,9 @@ impl BitApp {
                         });
                 },
             );
+        output.state.offset.y
     }
-    
+
     /// Run frame width analysis on the current bits
     pub fn run_frame_width_analysis(&mut self) {
         use crate::analysis::find_best_width;

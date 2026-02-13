@@ -86,15 +86,16 @@ impl ByteViewer {
     }
 
     /// Render the byte view with pattern highlighting
-    pub fn render_with_patterns(&mut self, ui: &mut egui::Ui, bits: &BitVec<u8, Msb0>, patterns: &[Pattern]) {
+    pub fn render_with_patterns(&mut self, ui: &mut egui::Ui, bits: &BitVec<u8, Msb0>, patterns: &[Pattern], bit_offset: usize, scroll_to_y: Option<f32>) -> f32 {
         if bits.is_empty() {
             ui.label("No data to display");
-            return;
+            return 0.0;
         }
 
         // Calculate total size WITHOUT converting all bits
         let total_bits = bits.len();
-        let total_bytes = (total_bits + 7) / 8;
+        let effective_bits = total_bits.saturating_sub(bit_offset);
+        let total_bytes = (effective_bits + 7) / 8;
         let bytes_per_row = self.config.bytes_per_row;
         let total_rows = (total_bytes + bytes_per_row - 1) / bytes_per_row;
 
@@ -108,10 +109,13 @@ impl ByteViewer {
         self.render_column_headers(ui, bytes_per_row, byte_width, offset_width, header_height);
 
         // Use ScrollArea with virtualization
-        egui::ScrollArea::vertical()
+        let mut scroll_area = egui::ScrollArea::vertical()
             .id_salt("byte_viewer_scroll")
-            .auto_shrink([false, false])
-            .show_rows(
+            .auto_shrink([false, false]);
+        if let Some(y) = scroll_to_y {
+            scroll_area = scroll_area.vertical_scroll_offset(y);
+        }
+        let output = scroll_area.show_rows(
                 ui,
                 byte_height,
                 total_rows,
@@ -138,7 +142,7 @@ impl ByteViewer {
                             
                             for byte_idx in row_start..row_end {
                                 // Convert only this single byte from bits
-                                let bit_start = byte_idx * 8;
+                                let bit_start = bit_offset + byte_idx * 8;
                                 let bit_end = (bit_start + 8).min(total_bits);
                                 let byte_bits = &bits[bit_start..bit_end];
                                 
@@ -223,7 +227,7 @@ impl ByteViewer {
                                 // Show tooltip with bit offset and pattern info
                                 if response.hovered() {
                                     response.on_hover_ui(|ui| {
-                                        ui.label(format!("Byte: {}\nBit offset: {}", byte_idx, byte_idx * 8));
+                                        ui.label(format!("Byte: {}\nBit offset: {}", byte_idx, bit_offset + byte_idx * 8));
                                         ui.label(format!("Value: 0x{:02X} ({})", byte, byte));
                                         ui.label(format!("Binary: {:08b}", byte));
                                         
@@ -238,6 +242,7 @@ impl ByteViewer {
                     }
                 },
             );
+        output.state.offset.y
     }
 
     fn render_column_headers(&self, ui: &mut egui::Ui, bytes_per_row: usize, byte_width: f32, offset_width: f32, header_height: f32) {

@@ -624,3 +624,91 @@ pub fn render_frame_width_finder_window(app: &mut BitApp, ctx: &egui::Context) {
     }
 }
 
+pub fn render_goto_offset_dialog(app: &mut BitApp, ctx: &egui::Context) {
+    if !app.show_goto_offset_dialog {
+        return;
+    }
+
+    let mut open = true;
+    let mut apply = false;
+
+    egui::Window::new("Go to Offset")
+        .open(&mut open)
+        .resizable(false)
+        .collapsible(false)
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.label("Format:");
+                ui.selectable_value(
+                    &mut app.goto_offset_format,
+                    crate::app::GotoOffsetFormat::Bit,
+                    "Bit",
+                );
+                ui.selectable_value(
+                    &mut app.goto_offset_format,
+                    crate::app::GotoOffsetFormat::Byte,
+                    "Byte (dec)",
+                );
+                ui.selectable_value(
+                    &mut app.goto_offset_format,
+                    crate::app::GotoOffsetFormat::Hex,
+                    "Byte (hex)",
+                );
+            });
+
+            ui.horizontal(|ui| {
+                ui.label("Offset:");
+                let response = ui.text_edit_singleline(&mut app.goto_offset_input);
+                if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    apply = true;
+                }
+            });
+
+            ui.add_space(5.0);
+
+            ui.horizontal(|ui| {
+                if ui.button("Go").clicked() {
+                    apply = true;
+                }
+                if ui.button("Cancel").clicked() {
+                    app.show_goto_offset_dialog = false;
+                }
+            });
+        });
+
+    if !open {
+        app.show_goto_offset_dialog = false;
+    }
+
+    if apply {
+        apply_goto_offset(app);
+    }
+}
+
+fn apply_goto_offset(app: &mut BitApp) {
+    use crate::app::GotoOffsetFormat;
+
+    let input = app.goto_offset_input.trim();
+    let bit_position = match app.goto_offset_format {
+        GotoOffsetFormat::Bit => input.parse::<usize>().ok(),
+        GotoOffsetFormat::Byte => input.parse::<usize>().ok().map(|b| b * 8),
+        GotoOffsetFormat::Hex => usize::from_str_radix(
+            input.trim_start_matches("0x").trim_start_matches("0X"),
+            16,
+        )
+        .ok()
+        .map(|b| b * 8),
+    };
+
+    if let Some(pos) = bit_position {
+        app.view_bit_offset = pos;
+        app.show_goto_offset_dialog = false;
+    } else {
+        app.show_toast(
+            "Invalid offset value".to_string(),
+            crate::app::ToastType::Warning,
+        );
+    }
+}
+
