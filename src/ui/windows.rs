@@ -6,176 +6,315 @@ use crate::operations::{EditorAction, EditorContext};
 use eframe::egui;
 
 pub fn render_pattern_locator_window(app: &mut BitApp, ctx: &egui::Context) {
-    if app.show_pattern_locator {
-        egui::Window::new("Pattern Locator")
-            .open(&mut app.show_pattern_locator)
-            .default_width(450.0)
-            .default_height(700.0)
-            .resizable(true)
-            .collapsible(false)
-            .show(ctx, |ui| {
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false, false])
+    if !app.show_pattern_locator {
+        return;
+    }
+
+    const PAGE_SIZE: usize = 100;
+
+    // Collect deferred actions to avoid borrow conflicts
+    let mut do_search = false;
+    let mut navigate_to: Option<(usize, usize)> = None; // (position, pattern_bits_len)
+    let mut select_and_search_pattern: Option<usize> = None;
+    let mut remove_pattern: Option<usize> = None;
+
+    egui::Window::new("Pattern Locator")
+        .open(&mut app.show_pattern_locator)
+        .default_width(480.0)
+        .default_height(550.0)
+        .resizable(true)
+        .collapsible(false)
+        .show(ctx, |ui| {
+            // ── Section 1: Search Form ──
+            ui.group(|ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Format:");
+                    ui.selectable_value(&mut app.pattern_format, PatternFormat::Bits, "Bits");
+                    ui.selectable_value(&mut app.pattern_format, PatternFormat::Hex, "Hex");
+                    ui.selectable_value(&mut app.pattern_format, PatternFormat::Ascii, "ASCII");
+                });
+
+                ui.horizontal(|ui| {
+                    ui.label("Pattern:");
+                    let response = ui.text_edit_singleline(&mut app.pattern_input);
+                    if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        do_search = true;
+                    }
+                });
+
+                ui.horizontal(|ui| {
+                    ui.label("Garbles:");
+                    ui.add(egui::Slider::new(&mut app.pattern_garbles, 0..=16));
+                });
+
+                ui.horizontal(|ui| {
+                    if ui.button("Search").clicked() {
+                        do_search = true;
+                    }
+                    if ui.button("Clear").clicked() {
+                        app.pattern_input.clear();
+                        app.pattern_garbles = 0;
+                    }
+                });
+            });
+
+            // ── Section 2: Saved Patterns ──
+            if !app.patterns.is_empty() {
+                ui.add_space(2.0);
+                egui::CollapsingHeader::new(format!("Saved Patterns ({})", app.patterns.len()))
+                    .default_open(true)
                     .show(ui, |ui| {
-                        ui.heading("Search for Bit Patterns");
-                        ui.separator();
-                        
-                        ui.group(|ui| {
-                            ui.heading("Add Pattern");
-                            
+                        for (idx, pattern) in app.patterns.iter().enumerate() {
                             ui.horizontal(|ui| {
-                                ui.label("Name:");
-                                ui.text_edit_singleline(&mut app.pattern_name_input);
-                            });
-                            
-                            ui.horizontal(|ui| {
-                                ui.label("Format:");
-                                ui.selectable_value(&mut app.pattern_format, PatternFormat::Bits, "Bits");
-                                ui.selectable_value(&mut app.pattern_format, PatternFormat::Hex, "Hex");
-                                ui.selectable_value(&mut app.pattern_format, PatternFormat::Ascii, "ASCII");
-                            });
-                            
-                            ui.horizontal(|ui| {
-                                ui.label("Pattern:");
-                                ui.text_edit_singleline(&mut app.pattern_input);
-                            });
-                            
-                            ui.horizontal(|ui| {
-                                ui.label("Garbles:");
-                                ui.add(egui::Slider::new(&mut app.pattern_garbles, 0..=16));
-                            });
-                            
-                            ui.horizontal(|ui| {
-                                if ui.button("+ Add Pattern").clicked() {
-                                    let name = if app.pattern_name_input.is_empty() {
-                                        format!("Pattern {}", app.patterns.len() + 1)
-                                    } else {
-                                        app.pattern_name_input.clone()
-                                    };
-                                    
-                                    match Pattern::new(name, app.pattern_format, app.pattern_input.clone(), app.pattern_garbles) {
-                                        Ok(pattern) => {
-                                            app.patterns.push(pattern);
-                                            app.pattern_name_input.clear();
-                                            app.pattern_input.clear();
-                                            app.error_message = None;
-                                        }
-                                        Err(e) => {
-                                            app.error_message = Some(format!("Invalid pattern: {}", e));
-                                        }
-                                    }
+                                let selected = app.selected_pattern == Some(idx);
+                                let label_text = format!(
+                                    "{}    {} matches",
+                                    pattern.name,
+                                    pattern.matches.len()
+                                );
+                                if ui.selectable_label(selected, label_text).clicked() {
+                                    select_and_search_pattern = Some(idx);
                                 }
-                                
-                                if ui.button("Clear").clicked() {
-                                    app.pattern_name_input.clear();
-                                    app.pattern_input.clear();
-                                    app.pattern_garbles = 0;
+
+                                if ui.small_button("x").clicked() {
+                                    remove_pattern = Some(idx);
                                 }
                             });
-                        });
-                        
-                        ui.separator();
-                        ui.heading("Patterns");
-                        
-                        if app.patterns.is_empty() {
-                            ui.label("No patterns added yet");
-                        } else {
-                            let mut to_remove = None;
-                            let mut to_search = None;
-                            
-                            for (idx, pattern) in app.patterns.iter().enumerate() {
-                                ui.group(|ui| {
-                                    ui.horizontal(|ui| {
-                                        let selected = app.selected_pattern == Some(idx);
-                                        if ui.selectable_label(selected, &pattern.name).clicked() {
-                                            app.selected_pattern = Some(idx);
-                                        }
-                                        
-                                        if ui.button("Search").clicked() {
-                                            to_search = Some(idx);
-                                        }
-                                        
-                                        if ui.button("x").clicked() {
-                                            to_remove = Some(idx);
-                                        }
-                                    });
-                                    
-                                    ui.label(format!("Pattern: {}", pattern.input));
-                                    ui.label(format!("Garbles: {} | Matches: {}", pattern.garbles, pattern.matches.len()));
-                                });
-                            }
-                            
-                            if let Some(idx) = to_remove {
-                                app.patterns.remove(idx);
-                                if app.selected_pattern == Some(idx) {
-                                    app.selected_pattern = None;
-                                }
-                            }
-                            
-                            if let Some(idx) = to_search {
-                                let bits_to_search = if app.show_original {
-                                    &app.original_bits
-                                } else {
-                                    &app.processed_bits
-                                };
-                                app.patterns[idx].search(bits_to_search);
-                                app.selected_pattern = Some(idx);
-                            }
-                        }
-                        
-                        ui.separator();
-                        
-                        if let Some(pattern_idx) = app.selected_pattern {
-                            if pattern_idx < app.patterns.len() {
-                                let pattern = &app.patterns[pattern_idx];
-                                
-                                ui.heading(format!("Results for '{}'", pattern.name));
-                                ui.label(format!("Found {} matches", pattern.matches.len()));
-                                
-                                if !pattern.matches.is_empty() {
-                                    ui.horizontal(|ui| {
-                                        if ui.button("Highlight All").clicked() {
-                                            app.viewer.clear_highlights();
-                                            for m in &pattern.matches {
-                                                app.viewer.add_highlight_range(m.position, pattern.bits.len());
-                                            }
-                                        }
-                                        
-                                        if ui.button("Clear Highlights").clicked() {
-                                            app.viewer.clear_highlights();
-                                        }
-                                    });
-                                    
-                                    ui.separator();
-                                    
-                                    egui::ScrollArea::vertical()
-                                        .max_height(300.0)
-                                        .show(ui, |ui| {
-                                            for (idx, m) in pattern.matches.iter().enumerate() {
-                                                ui.horizontal(|ui| {
-                                                    if ui.button(format!("#{}", idx + 1)).clicked() {
-                                                        app.viewer.clear_highlights();
-                                                        app.viewer.add_highlight_range(m.position, pattern.bits.len());
-                                                        app.viewer.jump_to_position(m.position);
-                                                    }
-                                                    
-                                                    ui.label(format!("@{}", m.position));
-                                                    
-                                                    if let Some(delta) = m.delta {
-                                                        ui.label(format!("Δ{}", delta));
-                                                    }
-                                                    
-                                                    if m.mismatches > 0 {
-                                                        ui.label(format!("~{}", m.mismatches));
-                                                    }
-                                                });
-                                            }
-                                        });
-                                }
-                            }
                         }
                     });
-            });
+            }
+
+            // ── Section 3: Results ──
+            if let Some(pattern_idx) = app.selected_pattern {
+                if pattern_idx < app.patterns.len() {
+                    let pattern = &app.patterns[pattern_idx];
+                    let match_count = pattern.matches.len();
+
+                    if match_count > 0 {
+                        ui.separator();
+                        ui.group(|ui| {
+                            ui.strong(format!("\"{}\" -- {} matches", pattern.name, match_count));
+
+                            // Navigation bar: Prev / Match N of M / Next
+                            ui.horizontal(|ui| {
+                                if ui.button("<< Prev").clicked() {
+                                    let new_idx = match app.current_match_index {
+                                        Some(i) if i > 0 => i - 1,
+                                        Some(_) => match_count - 1,
+                                        None => match_count - 1,
+                                    };
+                                    app.current_match_index = Some(new_idx);
+                                    app.match_page = new_idx / PAGE_SIZE;
+                                    let m = &pattern.matches[new_idx];
+                                    navigate_to = Some((m.position, pattern.bits.len()));
+                                }
+
+                                let display_idx = app.current_match_index.map(|i| i + 1).unwrap_or(0);
+                                ui.label(format!("Match {} of {}", display_idx, match_count));
+
+                                if ui.button("Next >>").clicked() {
+                                    let new_idx = match app.current_match_index {
+                                        Some(i) if i + 1 < match_count => i + 1,
+                                        Some(_) => 0,
+                                        None => 0,
+                                    };
+                                    app.current_match_index = Some(new_idx);
+                                    app.match_page = new_idx / PAGE_SIZE;
+                                    let m = &pattern.matches[new_idx];
+                                    navigate_to = Some((m.position, pattern.bits.len()));
+                                }
+                            });
+
+                            ui.horizontal(|ui| {
+                                if ui.button("Highlight All").clicked() {
+                                    app.viewer.clear_highlights();
+                                    for m in &pattern.matches {
+                                        app.viewer.add_highlight_range(m.position, pattern.bits.len());
+                                    }
+                                }
+                                if ui.button("Clear Highlights").clicked() {
+                                    app.viewer.clear_highlights();
+                                }
+                            });
+
+                            ui.separator();
+
+                            // Paginated table
+                            let total_pages = (match_count + PAGE_SIZE - 1) / PAGE_SIZE;
+                            let page = app.match_page.min(total_pages.saturating_sub(1));
+                            let page_start = page * PAGE_SIZE;
+                            let page_end = (page_start + PAGE_SIZE).min(match_count);
+
+                            // Pagination controls
+                            if total_pages > 1 {
+                                ui.horizontal(|ui| {
+                                    ui.add_enabled_ui(page > 0, |ui| {
+                                        if ui.small_button("<<").clicked() {
+                                            app.match_page = 0;
+                                        }
+                                        if ui.small_button("<").clicked() {
+                                            app.match_page = page.saturating_sub(1);
+                                        }
+                                    });
+
+                                    ui.label(format!(
+                                        "Page {} of {}  (#{} - #{})",
+                                        page + 1,
+                                        total_pages,
+                                        page_start + 1,
+                                        page_end,
+                                    ));
+
+                                    ui.add_enabled_ui(page + 1 < total_pages, |ui| {
+                                        if ui.small_button(">").clicked() {
+                                            app.match_page = (page + 1).min(total_pages - 1);
+                                        }
+                                        if ui.small_button(">>").clicked() {
+                                            app.match_page = total_pages - 1;
+                                        }
+                                    });
+                                });
+                            }
+
+                            // Table
+                            use egui_extras::{TableBuilder, Column};
+                            let current_idx = app.current_match_index;
+                            let bits_len = pattern.bits.len();
+                            let has_garbles = pattern.garbles > 0;
+
+                            let mut table = TableBuilder::new(ui)
+                                .striped(true)
+                                .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                                .column(Column::auto().at_least(35.0))   // #
+                                .column(Column::auto().at_least(80.0))   // Position
+                                .column(Column::auto().at_least(70.0));  // Delta
+                            if has_garbles {
+                                table = table.column(Column::remainder().at_least(50.0)); // Garbles
+                            } else {
+                                table = table.column(Column::remainder()); // spacer
+                            }
+
+                            table
+                                .header(20.0, |mut header| {
+                                    header.col(|ui| { ui.strong("#"); });
+                                    header.col(|ui| { ui.strong("Position"); });
+                                    header.col(|ui| { ui.strong("Delta"); });
+                                    if has_garbles {
+                                        header.col(|ui| { ui.strong("Garbles"); });
+                                    } else {
+                                        header.col(|_| {});
+                                    }
+                                })
+                                .body(|body| {
+                                    let row_count = page_end - page_start;
+                                    body.rows(20.0, row_count, |mut row| {
+                                        let match_idx = page_start + row.index();
+                                        let m = &pattern.matches[match_idx];
+                                        let is_current = current_idx == Some(match_idx);
+
+                                        if is_current {
+                                            row.set_selected(true);
+                                        }
+
+                                        row.col(|ui| {
+                                            if ui.selectable_label(is_current, format!("{}", match_idx + 1)).clicked() {
+                                                app.current_match_index = Some(match_idx);
+                                                navigate_to = Some((m.position, bits_len));
+                                            }
+                                        });
+                                        row.col(|ui| {
+                                            if ui.selectable_label(is_current, format!("{}", m.position)).clicked() {
+                                                app.current_match_index = Some(match_idx);
+                                                navigate_to = Some((m.position, bits_len));
+                                            }
+                                        });
+                                        row.col(|ui| {
+                                            let text = m.delta.map(|d| format!("{}", d)).unwrap_or_default();
+                                            if ui.selectable_label(is_current, text).clicked() {
+                                                app.current_match_index = Some(match_idx);
+                                                navigate_to = Some((m.position, bits_len));
+                                            }
+                                        });
+                                        row.col(|ui| {
+                                            if has_garbles {
+                                                let text = if m.mismatches > 0 { format!("{}", m.mismatches) } else { String::new() };
+                                                if ui.selectable_label(is_current, text).clicked() {
+                                                    app.current_match_index = Some(match_idx);
+                                                    navigate_to = Some((m.position, bits_len));
+                                                }
+                                            }
+                                        });
+                                    });
+                                });
+                        });
+                    } else {
+                        ui.separator();
+                        ui.label(format!("\"{}\" -- 0 matches", pattern.name));
+                    }
+                }
+            }
+        });
+
+    // ── Deferred actions ──
+
+    // Handle search button / Enter
+    if do_search && !app.pattern_input.is_empty() {
+        let name = format!("Pattern {}", app.patterns.len() + 1);
+        match Pattern::new(name, app.pattern_format, app.pattern_input.clone(), app.pattern_garbles) {
+            Ok(mut pattern) => {
+                let bits_to_search = if app.show_original {
+                    &app.original_bits
+                } else {
+                    &app.processed_bits
+                };
+                pattern.search(bits_to_search);
+                app.patterns.push(pattern);
+                let new_idx = app.patterns.len() - 1;
+                app.selected_pattern = Some(new_idx);
+                app.current_match_index = None;
+                app.match_page = 0;
+                app.error_message = None;
+            }
+            Err(e) => {
+                app.error_message = Some(format!("Invalid pattern: {}", e));
+            }
+        }
+    }
+
+    // Handle select + search from saved patterns list
+    if let Some(idx) = select_and_search_pattern {
+        let bits_to_search = if app.show_original {
+            &app.original_bits
+        } else {
+            &app.processed_bits
+        };
+        app.patterns[idx].search(bits_to_search);
+        app.selected_pattern = Some(idx);
+        app.current_match_index = None;
+        app.match_page = 0;
+    }
+
+    // Handle pattern removal
+    if let Some(idx) = remove_pattern {
+        app.patterns.remove(idx);
+        if app.selected_pattern == Some(idx) {
+            app.selected_pattern = None;
+            app.current_match_index = None;
+            app.match_page = 0;
+        } else if let Some(sel) = app.selected_pattern {
+            if sel > idx {
+                app.selected_pattern = Some(sel - 1);
+            }
+        }
+        app.viewer.clear_highlights();
+    }
+
+    // Handle navigation (cross-view fix: set both bit_offset AND jump_to_position)
+    if let Some((position, bits_len)) = navigate_to {
+        app.viewer.clear_highlights();
+        app.viewer.add_highlight_range(position, bits_len);
+        app.view_bit_offset = position;
+        app.viewer.jump_to_position(position);
     }
 }
 

@@ -55,7 +55,9 @@ pub struct BitApp {
     pub pattern_format: PatternFormat,
     pub pattern_garbles: usize,
     pub selected_pattern: Option<usize>,
-    
+    pub current_match_index: Option<usize>,
+    pub match_page: usize,
+
     // Session restore state
     pub show_restore_dialog: bool,
     pub pending_session: Option<AppSession>,
@@ -236,6 +238,8 @@ impl Default for BitApp {
             pattern_format: PatternFormat::Bits,
             pattern_garbles: 0,
             selected_pattern: None,
+            current_match_index: None,
+            match_page: 0,
             show_restore_dialog,
             pending_session,
             show_column_editor: false,
@@ -317,6 +321,8 @@ impl BitApp {
         }
         // Also clear bit viewer highlights since they're based on pattern matches
         self.viewer.clear_highlights();
+        self.current_match_index = None;
+        self.match_page = 0;
     }
     
     pub fn apply_operations(&mut self) {

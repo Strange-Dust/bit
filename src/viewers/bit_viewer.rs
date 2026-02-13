@@ -1,5 +1,5 @@
 use bitvec::prelude::*;
-use egui::{Color32, Pos2, Rect, Sense, Stroke, Vec2};
+use egui::{Color32, ColorImage, Pos2, Rect, Sense, Stroke, TextureHandle, TextureOptions, Vec2};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use crate::core::BitSelection;
@@ -25,6 +25,57 @@ pub struct BitViewer {
     pub highlighted_bits: HashSet<usize>,
     pub jump_to_bit: Option<usize>,
     last_bit_offset: Option<usize>,
+    circle_tex: Option<TextureHandle>,
+    octagon_tex: Option<TextureHandle>,
+}
+
+fn create_shape_texture(
+    ctx: &egui::Context,
+    name: &str,
+    sdf_fn: impl Fn(f32, f32, f32) -> f32,
+) -> TextureHandle {
+    let size = 64usize;
+    let center = size as f32 / 2.0;
+    let radius = center - 1.0;
+    let mut pixels = vec![Color32::TRANSPARENT; size * size];
+
+    for y in 0..size {
+        for x in 0..size {
+            let dx = x as f32 + 0.5 - center;
+            let dy = y as f32 + 0.5 - center;
+            let sdf = sdf_fn(dx, dy, radius);
+            // Antialiased edge: smooth transition over 1px
+            let alpha = ((-sdf + 0.5).clamp(0.0, 1.0) * 255.0) as u8;
+            pixels[y * size + x] = Color32::from_rgba_premultiplied(alpha, alpha, alpha, alpha);
+        }
+    }
+
+    ctx.load_texture(
+        name,
+        ColorImage {
+            size: [size, size],
+            source_size: Vec2::new(size as f32, size as f32),
+            pixels,
+        },
+        TextureOptions::LINEAR,
+    )
+}
+
+fn circle_sdf(dx: f32, dy: f32, radius: f32) -> f32 {
+    (dx * dx + dy * dy).sqrt() - radius
+}
+
+fn octagon_sdf(dx: f32, dy: f32, radius: f32) -> f32 {
+    let inradius = radius * std::f32::consts::FRAC_PI_8.cos();
+    let mut max_d = f32::NEG_INFINITY;
+    for i in 0..8 {
+        let angle = i as f32 * std::f32::consts::FRAC_PI_4;
+        let d = dx * angle.cos() + dy * angle.sin();
+        if d > max_d {
+            max_d = d;
+        }
+    }
+    max_d - inradius
 }
 
 impl BitViewer {
@@ -43,6 +94,8 @@ impl BitViewer {
             highlighted_bits: HashSet::new(),
             jump_to_bit: None,
             last_bit_offset: None,
+            circle_tex: None,
+            octagon_tex: None,
         }
     }
 
@@ -65,6 +118,14 @@ impl BitViewer {
     }
 
     pub fn show(&mut self, ui: &mut egui::Ui, bit_offset: usize, selection: &mut BitSelection) -> usize {
+        // Lazily create shape textures (once, cached for lifetime of viewer)
+        if self.circle_tex.is_none() {
+            self.circle_tex = Some(create_shape_texture(ui.ctx(), "bit_circle", circle_sdf));
+            self.octagon_tex = Some(create_shape_texture(ui.ctx(), "bit_octagon", octagon_sdf));
+        }
+        let circle_tex_id = self.circle_tex.as_ref().unwrap().id();
+        let octagon_tex_id = self.octagon_tex.as_ref().unwrap().id();
+
         let frame_length = self.frame_length;
         let sub_row = bit_offset % frame_length;
         // Total rows covering all data (aligned to sub_row)
@@ -255,91 +316,42 @@ impl BitViewer {
                     col.min(frame_length)
                 };
 
-                // Pre-compute shape geometry
-                let half = self.bit_size / 2.0;
-
-                const N_CIRCLE_SEG: usize = 16;
-                let circle_offsets: [(f32, f32); N_CIRCLE_SEG] = {
-                    let mut o = [(0.0f32, 0.0f32); N_CIRCLE_SEG];
-                    for i in 0..N_CIRCLE_SEG {
-                        let a = (i as f32) * std::f32::consts::TAU / N_CIRCLE_SEG as f32;
-                        o[i] = (half * a.cos(), half * a.sin());
-                    }
-                    o
-                };
-
-                let octagon_offsets: [(f32, f32); 8] = {
-                    let ao = std::f32::consts::PI / 8.0;
-                    let mut o = [(0.0f32, 0.0f32); 8];
-                    for i in 0..8 {
-                        let a = ao + (i as f32) * std::f32::consts::PI / 4.0;
-                        o[i] = (half * a.cos(), half * a.sin());
-                    }
-                    o
-                };
-
-                // Pre-compute outline ring offsets (outer/inner vertices for ring mesh)
-                let circle_outline_ring: [(f32, f32, f32, f32); N_CIRCLE_SEG] = {
-                    let hw = 0.5;
-                    let ro = half + hw;
-                    let ri = (half - hw).max(0.0);
-                    let mut r = [(0.0f32, 0.0f32, 0.0f32, 0.0f32); N_CIRCLE_SEG];
-                    for i in 0..N_CIRCLE_SEG {
-                        let a = (i as f32) * std::f32::consts::TAU / N_CIRCLE_SEG as f32;
-                        let (c, s) = (a.cos(), a.sin());
-                        r[i] = (ro * c, ro * s, ri * c, ri * s);
-                    }
-                    r
-                };
-
-                let octagon_outline_ring: [(f32, f32, f32, f32); 8] = {
-                    let hw = 0.5;
-                    let ro = half + hw;
-                    let ri = (half - hw).max(0.0);
-                    let ao = std::f32::consts::PI / 8.0;
-                    let mut r = [(0.0f32, 0.0f32, 0.0f32, 0.0f32); 8];
-                    for i in 0..8 {
-                        let a = ao + (i as f32) * std::f32::consts::PI / 4.0;
-                        let (c, s) = (a.cos(), a.sin());
-                        r[i] = (ro * c, ro * s, ri * c, ri * s);
-                    }
-                    r
-                };
+                // LOD: at small pixel sizes, downgrade shapes to reduce vertex count
+                let lod: u8 = if self.bit_size < 4.0 { 0 } else if self.bit_size < 10.0 { 1 } else { 2 };
+                let render_shape = if lod <= 1 { BitShape::Square } else { self.shape };
 
                 let grid_stroke = Stroke::new(1.0, Color32::GRAY);
                 let thick_grid_stroke = Stroke::new(2.0, Color32::GRAY);
                 let has_highlights = !self.highlighted_bits.is_empty();
                 let highlight_color = Color32::from_rgba_unmultiplied(255, 255, 0, 150);
                 let outline_color = Color32::GRAY;
+                let full_uv = Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(1.0, 1.0));
 
-                // Batched meshes: 1-3 draw calls instead of 41K+ individual shapes
+                // Batched meshes — textured quads for circles/octagons, plain for squares
                 let vis_bits = (end_row.saturating_sub(start_row)) * (end_col.saturating_sub(start_col));
-                let mut fill_mesh = egui::Mesh::default();
-                let mut highlight_mesh = egui::Mesh::default();
-                let mut outline_mesh = egui::Mesh::default();
+                let shape_tex_id = match render_shape {
+                    BitShape::Circle => Some(circle_tex_id),
+                    BitShape::Octagon => Some(octagon_tex_id),
+                    BitShape::Square => None,
+                };
 
-                match self.shape {
-                    BitShape::Square => {
-                        fill_mesh.vertices.reserve(vis_bits * 4);
-                        fill_mesh.indices.reserve(vis_bits * 6);
-                    }
-                    BitShape::Circle => {
-                        fill_mesh.vertices.reserve(vis_bits * (N_CIRCLE_SEG + 1));
-                        fill_mesh.indices.reserve(vis_bits * N_CIRCLE_SEG * 3);
-                        if self.show_grid {
-                            outline_mesh.vertices.reserve(vis_bits * N_CIRCLE_SEG * 2);
-                            outline_mesh.indices.reserve(vis_bits * N_CIRCLE_SEG * 6);
-                        }
-                    }
-                    BitShape::Octagon => {
-                        fill_mesh.vertices.reserve(vis_bits * 9);
-                        fill_mesh.indices.reserve(vis_bits * 24);
-                        if self.show_grid {
-                            outline_mesh.vertices.reserve(vis_bits * 16);
-                            outline_mesh.indices.reserve(vis_bits * 48);
-                        }
-                    }
-                }
+                let mut fill_mesh = match shape_tex_id {
+                    Some(tid) => egui::Mesh::with_texture(tid),
+                    None => egui::Mesh::default(),
+                };
+                let mut highlight_mesh = match shape_tex_id {
+                    Some(tid) => egui::Mesh::with_texture(tid),
+                    None => egui::Mesh::default(),
+                };
+                // Outline uses same fill texture but drawn larger behind (overdraw technique)
+                let mut outline_mesh = match shape_tex_id {
+                    Some(tid) => egui::Mesh::with_texture(tid),
+                    None => egui::Mesh::default(),
+                };
+
+                // All shapes use 4 verts + 6 indices per bit (textured quads or plain quads)
+                fill_mesh.vertices.reserve(vis_bits * 4);
+                fill_mesh.indices.reserve(vis_bits * 6);
 
                 // Build meshes for all visible bits
                 for row in start_row..end_row {
@@ -356,9 +368,11 @@ impl BitViewer {
                         let y = response.rect.min.y + calc_position(row, self.thick_grid_interval_vertical, self.thick_grid_spacing_vertical);
 
                         let is_highlighted = has_highlights && self.highlighted_bits.contains(&bit_index);
+                        let bit_rect = Rect::from_min_size(Pos2::new(x, y), Vec2::splat(self.bit_size));
 
-                        match self.shape {
+                        match render_shape {
                             BitShape::Square => {
+                                // Plain colored quad (no texture)
                                 let base = fill_mesh.vertices.len() as u32;
                                 fill_mesh.colored_vertex(Pos2::new(x, y), color);
                                 fill_mesh.colored_vertex(Pos2::new(x + self.bit_size, y), color);
@@ -377,102 +391,41 @@ impl BitViewer {
                                     highlight_mesh.add_triangle(hb, hb + 2, hb + 3);
                                 }
                             }
-                            BitShape::Circle => {
-                                let cx = x + half;
-                                let cy = y + half;
-
-                                // Fan: center + 16 perimeter vertices
-                                let base = fill_mesh.vertices.len() as u32;
-                                fill_mesh.colored_vertex(Pos2::new(cx, cy), color);
-                                for &(dx, dy) in &circle_offsets {
-                                    fill_mesh.colored_vertex(Pos2::new(cx + dx, cy + dy), color);
-                                }
-                                for i in 0..N_CIRCLE_SEG as u32 {
-                                    fill_mesh.add_triangle(base, base + 1 + i, base + 1 + (i + 1) % N_CIRCLE_SEG as u32);
-                                }
+                            BitShape::Circle | BitShape::Octagon => {
+                                // Textured quad — shape defined by texture alpha
+                                fill_mesh.add_rect_with_uv(bit_rect, full_uv, color);
 
                                 if is_highlighted {
-                                    let hb = highlight_mesh.vertices.len() as u32;
-                                    highlight_mesh.colored_vertex(Pos2::new(cx, cy), highlight_color);
-                                    for &(dx, dy) in &circle_offsets {
-                                        highlight_mesh.colored_vertex(Pos2::new(cx + dx, cy + dy), highlight_color);
-                                    }
-                                    for i in 0..N_CIRCLE_SEG as u32 {
-                                        highlight_mesh.add_triangle(hb, hb + 1 + i, hb + 1 + (i + 1) % N_CIRCLE_SEG as u32);
-                                    }
+                                    highlight_mesh.add_rect_with_uv(bit_rect, full_uv, highlight_color);
                                 }
 
+                                // Outline via overdraw: slightly larger quad drawn behind
                                 if self.show_grid {
-                                    // Ring mesh: 32 vertices, 32 triangles per circle outline
-                                    let ob = outline_mesh.vertices.len() as u32;
-                                    for &(ox, oy, ix, iy) in &circle_outline_ring {
-                                        outline_mesh.colored_vertex(Pos2::new(cx + ox, cy + oy), outline_color);
-                                        outline_mesh.colored_vertex(Pos2::new(cx + ix, cy + iy), outline_color);
-                                    }
-                                    for i in 0..N_CIRCLE_SEG as u32 {
-                                        let next = (i + 1) % N_CIRCLE_SEG as u32;
-                                        outline_mesh.add_triangle(ob + i * 2, ob + i * 2 + 1, ob + next * 2 + 1);
-                                        outline_mesh.add_triangle(ob + i * 2, ob + next * 2 + 1, ob + next * 2);
-                                    }
-                                }
-                            }
-                            BitShape::Octagon => {
-                                let cx = x + half;
-                                let cy = y + half;
-
-                                // Fan: center + 8 vertices
-                                let base = fill_mesh.vertices.len() as u32;
-                                fill_mesh.colored_vertex(Pos2::new(cx, cy), color);
-                                for &(dx, dy) in &octagon_offsets {
-                                    fill_mesh.colored_vertex(Pos2::new(cx + dx, cy + dy), color);
-                                }
-                                for i in 0..8u32 {
-                                    fill_mesh.add_triangle(base, base + 1 + i, base + 1 + (i + 1) % 8);
-                                }
-
-                                if is_highlighted {
-                                    let hb = highlight_mesh.vertices.len() as u32;
-                                    highlight_mesh.colored_vertex(Pos2::new(cx, cy), highlight_color);
-                                    for &(dx, dy) in &octagon_offsets {
-                                        highlight_mesh.colored_vertex(Pos2::new(cx + dx, cy + dy), highlight_color);
-                                    }
-                                    for i in 0..8u32 {
-                                        highlight_mesh.add_triangle(hb, hb + 1 + i, hb + 1 + (i + 1) % 8);
-                                    }
-                                }
-
-                                if self.show_grid {
-                                    // Ring mesh: 16 vertices, 16 triangles per octagon outline
-                                    let ob = outline_mesh.vertices.len() as u32;
-                                    for &(ox, oy, ix, iy) in &octagon_outline_ring {
-                                        outline_mesh.colored_vertex(Pos2::new(cx + ox, cy + oy), outline_color);
-                                        outline_mesh.colored_vertex(Pos2::new(cx + ix, cy + iy), outline_color);
-                                    }
-                                    for i in 0..8u32 {
-                                        let next = (i + 1) % 8;
-                                        outline_mesh.add_triangle(ob + i * 2, ob + i * 2 + 1, ob + next * 2 + 1);
-                                        outline_mesh.add_triangle(ob + i * 2, ob + next * 2 + 1, ob + next * 2);
-                                    }
+                                    let outline_rect = Rect::from_min_size(
+                                        Pos2::new(x - 1.0, y - 1.0),
+                                        Vec2::splat(self.bit_size + 2.0),
+                                    );
+                                    outline_mesh.add_rect_with_uv(outline_rect, full_uv, outline_color);
                                 }
                             }
                         }
                     }
                 }
 
-                // Submit batched meshes (1-3 draw calls for ALL visible shapes)
+                // Submit batched meshes — outline first (behind), then fill, then highlights
+                if !outline_mesh.vertices.is_empty() {
+                    painter.add(egui::Shape::mesh(outline_mesh));
+                }
                 if !fill_mesh.vertices.is_empty() {
                     painter.add(egui::Shape::mesh(fill_mesh));
                 }
                 if !highlight_mesh.vertices.is_empty() {
                     painter.add(egui::Shape::mesh(highlight_mesh));
                 }
-                if !outline_mesh.vertices.is_empty() {
-                    painter.add(egui::Shape::mesh(outline_mesh));
-                }
 
                 // Draw grid as segmented lines for Square shape
                 // Lines are segmented per group so they don't cross through thick_grid_spacing gaps
-                if self.show_grid && matches!(self.shape, BitShape::Square) && end_row > start_row && end_col > start_col {
+                if self.show_grid && lod >= 1 && matches!(render_shape, BitShape::Square) && end_row > start_row && end_col > start_col {
                     let h_interval = self.thick_grid_interval_horizontal;
                     let v_interval = self.thick_grid_interval_vertical;
                     let h_spacing = self.thick_grid_spacing_horizontal;
