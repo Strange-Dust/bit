@@ -470,35 +470,92 @@ impl BitViewer {
                     painter.add(egui::Shape::mesh(outline_mesh));
                 }
 
-                // Draw grid as continuous lines for Square shape
+                // Draw grid as segmented lines for Square shape
+                // Lines are segmented per group so they don't cross through thick_grid_spacing gaps
                 if self.show_grid && matches!(self.shape, BitShape::Square) && end_row > start_row && end_col > start_col {
                     let h_interval = self.thick_grid_interval_horizontal;
                     let v_interval = self.thick_grid_interval_vertical;
                     let h_spacing = self.thick_grid_spacing_horizontal;
                     let v_spacing = self.thick_grid_spacing_vertical;
 
-                    let y_top = response.rect.min.y + calc_position(start_row, v_interval, v_spacing);
-                    let y_bottom = response.rect.min.y + calc_position(end_row - 1, v_interval, v_spacing) + self.bit_size;
-                    let x_left = response.rect.min.x + calc_position(start_col, h_interval, h_spacing);
-                    let x_right = response.rect.min.x + calc_position(end_col - 1, h_interval, h_spacing) + self.bit_size;
+                    // Collect row group ranges (start_row..end_row segmented by v_interval)
+                    let row_groups: Vec<(usize, usize)> = if v_interval > 0 && v_spacing > 0.0 {
+                        let mut groups = Vec::new();
+                        let mut r = start_row;
+                        while r < end_row {
+                            let group_end = if v_interval > 0 {
+                                // Next group boundary: next multiple of v_interval
+                                let next_boundary = ((r / v_interval) + 1) * v_interval;
+                                next_boundary.min(end_row)
+                            } else {
+                                end_row
+                            };
+                            groups.push((r, group_end));
+                            r = group_end;
+                        }
+                        groups
+                    } else {
+                        vec![(start_row, end_row)]
+                    };
 
-                    // Vertical lines: left edge of each visible column
+                    // Collect col group ranges (start_col..end_col segmented by h_interval)
+                    let col_groups: Vec<(usize, usize)> = if h_interval > 0 && h_spacing > 0.0 {
+                        let mut groups = Vec::new();
+                        let mut c = start_col;
+                        while c < end_col {
+                            let group_end = if h_interval > 0 {
+                                let next_boundary = ((c / h_interval) + 1) * h_interval;
+                                next_boundary.min(end_col)
+                            } else {
+                                end_col
+                            };
+                            groups.push((c, group_end));
+                            c = group_end;
+                        }
+                        groups
+                    } else {
+                        vec![(start_col, end_col)]
+                    };
+
+                    // Vertical lines: left edge of each visible column, segmented per row group
                     for col in start_col..end_col {
                         let x = response.rect.min.x + calc_position(col, h_interval, h_spacing);
                         let stroke = if h_interval > 0 && col % h_interval == 0 { thick_grid_stroke } else { grid_stroke };
-                        painter.line_segment([Pos2::new(x, y_top), Pos2::new(x, y_bottom)], stroke);
+                        for &(grp_start, grp_end) in &row_groups {
+                            let y_top = response.rect.min.y + calc_position(grp_start, v_interval, v_spacing);
+                            let y_bottom = response.rect.min.y + calc_position(grp_end - 1, v_interval, v_spacing) + self.bit_size;
+                            painter.line_segment([Pos2::new(x, y_top), Pos2::new(x, y_bottom)], stroke);
+                        }
                     }
-                    // Right edge of last visible column
-                    painter.line_segment([Pos2::new(x_right, y_top), Pos2::new(x_right, y_bottom)], grid_stroke);
+                    // Right edge of last visible column, segmented per row group
+                    {
+                        let x_right = response.rect.min.x + calc_position(end_col - 1, h_interval, h_spacing) + self.bit_size;
+                        for &(grp_start, grp_end) in &row_groups {
+                            let y_top = response.rect.min.y + calc_position(grp_start, v_interval, v_spacing);
+                            let y_bottom = response.rect.min.y + calc_position(grp_end - 1, v_interval, v_spacing) + self.bit_size;
+                            painter.line_segment([Pos2::new(x_right, y_top), Pos2::new(x_right, y_bottom)], grid_stroke);
+                        }
+                    }
 
-                    // Horizontal lines: top edge of each visible row
+                    // Horizontal lines: top edge of each visible row, segmented per col group
                     for row in start_row..end_row {
                         let y = response.rect.min.y + calc_position(row, v_interval, v_spacing);
                         let stroke = if v_interval > 0 && row % v_interval == 0 { thick_grid_stroke } else { grid_stroke };
-                        painter.line_segment([Pos2::new(x_left, y), Pos2::new(x_right, y)], stroke);
+                        for &(grp_start, grp_end) in &col_groups {
+                            let x_left = response.rect.min.x + calc_position(grp_start, h_interval, h_spacing);
+                            let x_right = response.rect.min.x + calc_position(grp_end - 1, h_interval, h_spacing) + self.bit_size;
+                            painter.line_segment([Pos2::new(x_left, y), Pos2::new(x_right, y)], stroke);
+                        }
                     }
-                    // Bottom edge of last visible row
-                    painter.line_segment([Pos2::new(x_left, y_bottom), Pos2::new(x_right, y_bottom)], grid_stroke);
+                    // Bottom edge of last visible row, segmented per col group
+                    {
+                        let y_bottom = response.rect.min.y + calc_position(end_row - 1, v_interval, v_spacing) + self.bit_size;
+                        for &(grp_start, grp_end) in &col_groups {
+                            let x_left = response.rect.min.x + calc_position(grp_start, h_interval, h_spacing);
+                            let x_right = response.rect.min.x + calc_position(grp_end - 1, h_interval, h_spacing) + self.bit_size;
+                            painter.line_segment([Pos2::new(x_left, y_bottom), Pos2::new(x_right, y_bottom)], grid_stroke);
+                        }
+                    }
                 }
 
                 // Draw selection overlay as a single rectangle
