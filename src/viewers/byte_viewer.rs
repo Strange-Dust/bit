@@ -340,9 +340,8 @@ impl ByteViewer {
     }
 
     /// Check if a byte range overlaps with any pattern matches
-    /// Returns (is_match, pattern_color, pattern_name) if there's a match
+    /// Returns (pattern_color, pattern_name) if there's a match
     fn find_pattern_match(&self, bit_start: usize, bit_end: usize, patterns: &[Pattern]) -> Option<(Color32, String)> {
-        // Predefined colors for different patterns
         let pattern_colors = [
             Color32::from_rgb(255, 100, 100),  // Red
             Color32::from_rgb(100, 255, 100),  // Green
@@ -355,14 +354,27 @@ impl ByteViewer {
         ];
 
         for (pattern_idx, pattern) in patterns.iter().enumerate() {
-            for match_info in &pattern.matches {
+            if !pattern.highlight || !pattern.enabled {
+                continue;
+            }
+            // Check normal matches
+            for match_info in &pattern.normal_matches {
                 let match_start = match_info.position;
                 let match_end = match_info.position + pattern.bits.len();
-                
-                // Check if this byte overlaps with the pattern match
+
                 if bit_start < match_end && bit_end > match_start {
                     let color = pattern_colors[pattern_idx % pattern_colors.len()];
                     return Some((color, pattern.name.clone()));
+                }
+            }
+            // Check inverted matches
+            for match_info in &pattern.inverted_matches {
+                let match_start = match_info.position;
+                let match_end = match_info.position + pattern.bits.len();
+
+                if bit_start < match_end && bit_end > match_start {
+                    let color = pattern_colors[pattern_idx % pattern_colors.len()];
+                    return Some((color, format!("{} (inv)", pattern.name)));
                 }
             }
         }

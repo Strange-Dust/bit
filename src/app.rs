@@ -1,6 +1,6 @@
 // Main application state and logic
 
-use crate::analysis::{Pattern, PatternFormat, FrameWidthAnalysis};
+use crate::analysis::{FrameWidthAnalysis, PatternLocatorState};
 use crate::app_state::{LoadingState, OperationProcessingState};
 use crate::core::{BitSelection, ViewMode};
 use crate::operations::{BitOperation, OperationEditorState, OperationType};
@@ -48,15 +48,7 @@ pub struct BitApp {
     pub dragging_operation: Option<usize>,
     
     // Pattern Locator state
-    pub patterns: Vec<Pattern>,
-    pub show_pattern_locator: bool,
-    pub pattern_name_input: String,
-    pub pattern_input: String,
-    pub pattern_format: PatternFormat,
-    pub pattern_garbles: usize,
-    pub selected_pattern: Option<usize>,
-    pub current_match_index: Option<usize>,
-    pub match_page: usize,
+    pub pattern_locator: PatternLocatorState,
 
     // Session restore state
     pub show_restore_dialog: bool,
@@ -231,15 +223,7 @@ impl Default for BitApp {
             editing_operation_index: None,
             editor_state: None,
             dragging_operation: None,
-            patterns: Vec::new(),
-            show_pattern_locator: false,
-            pattern_name_input: String::new(),
-            pattern_input: String::new(),
-            pattern_format: PatternFormat::Bits,
-            pattern_garbles: 0,
-            selected_pattern: None,
-            current_match_index: None,
-            match_page: 0,
+            pattern_locator: PatternLocatorState::default(),
             show_restore_dialog,
             pending_session,
             show_column_editor: false,
@@ -316,13 +300,16 @@ impl BitApp {
     
     /// Clear all pattern matches
     pub fn clear_pattern_matches(&mut self) {
-        for pattern in &mut self.patterns {
-            pattern.matches.clear();
+        for pattern in &mut self.pattern_locator.patterns {
+            pattern.normal_matches.clear();
+            pattern.inverted_matches.clear();
         }
+        self.pattern_locator.merged_matches.clear();
+        self.pattern_locator.has_searched = false;
+        self.pattern_locator.selected_match_index = None;
+        self.pattern_locator.match_page = 0;
         // Also clear bit viewer highlights since they're based on pattern matches
         self.viewer.clear_highlights();
-        self.current_match_index = None;
-        self.match_page = 0;
     }
     
     pub fn apply_operations(&mut self) {
@@ -1086,14 +1073,31 @@ impl BitApp {
                                         // Check if this byte is part of any pattern match
                                         let mut pattern_match: Option<(egui::Color32, String)> = None;
                                         for (pattern_idx, pattern) in patterns.iter().enumerate() {
-                                            for match_info in &pattern.matches {
+                                            if !pattern.highlight || !pattern.enabled {
+                                                continue;
+                                            }
+                                            // Check normal matches
+                                            for match_info in &pattern.normal_matches {
                                                 let match_start = match_info.position;
                                                 let match_end = match_info.position + pattern.bits.len();
 
-                                                // Check if this byte overlaps with the pattern match
                                                 if bit_start < match_end && bit_end > match_start {
                                                     let color = pattern_colors[pattern_idx % pattern_colors.len()];
                                                     pattern_match = Some((color, pattern.name.clone()));
+                                                    break;
+                                                }
+                                            }
+                                            if pattern_match.is_some() {
+                                                break;
+                                            }
+                                            // Check inverted matches
+                                            for match_info in &pattern.inverted_matches {
+                                                let match_start = match_info.position;
+                                                let match_end = match_info.position + pattern.bits.len();
+
+                                                if bit_start < match_end && bit_end > match_start {
+                                                    let color = pattern_colors[pattern_idx % pattern_colors.len()];
+                                                    pattern_match = Some((color, format!("{} (inv)", pattern.name)));
                                                     break;
                                                 }
                                             }

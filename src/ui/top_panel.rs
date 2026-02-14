@@ -129,7 +129,7 @@ pub fn render(app: &mut BitApp, ctx: &egui::Context) {
                 .on_hover_text("Open pattern locator (Ctrl+F)\nSearch for bit patterns in your data")
                 .clicked()
             {
-                app.show_pattern_locator = !app.show_pattern_locator;
+                app.pattern_locator.show = !app.pattern_locator.show;
             }
 
             if ui.button("Frame Width Finder")

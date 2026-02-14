@@ -10,7 +10,7 @@ pub mod utils;
 pub mod viewers;
 
 // Re-export commonly used items for convenience
-pub use analysis::{Pattern, PatternFormat};
+pub use analysis::{Pattern, PatternFormat, PatternLocatorState, PatternMatch, MergedMatch, MatchFilter, merge_matches};
 pub use app::BitApp;
 pub use core::{BitSelection, ViewMode};
 pub use operations::{BitOperation, OperationCategory, OperationSequence, OperationType};

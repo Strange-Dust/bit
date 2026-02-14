@@ -55,8 +55,8 @@ fn handle_keyboard_shortcuts(app: &mut BitApp, ctx: &egui::Context) {
             // Close any open window in priority order
             if app.show_settings {
                 app.show_settings = false;
-            } else if app.show_pattern_locator {
-                app.show_pattern_locator = false;
+            } else if app.pattern_locator.show {
+                app.pattern_locator.show = false;
             } else if app.show_frame_width_finder {
                 app.show_frame_width_finder = false;
             } else if app.show_operation_menu.is_some() {
@@ -99,7 +99,7 @@ fn handle_keyboard_shortcuts(app: &mut BitApp, ctx: &egui::Context) {
 
         // Ctrl+F - Open Pattern Locator
         if ctrl && !shift && i.key_pressed(egui::Key::F) {
-            app.show_pattern_locator = !app.show_pattern_locator;
+            app.pattern_locator.show = !app.pattern_locator.show;
         }
 
         // Ctrl+G - Go to offset dialog
@@ -1260,7 +1260,7 @@ fn render_central_panel(app: &mut BitApp, ctx: &egui::Context) {
                 }
                 ViewMode::Byte => {
                     app.view_bit_offset = app.byte_viewer.render_with_patterns(
-                        ui, bits_to_display, &app.patterns, app.view_bit_offset,
+                        ui, bits_to_display, &app.pattern_locator.patterns, app.view_bit_offset,
                     );
                 }
                 ViewMode::Ascii => {
@@ -1269,7 +1269,7 @@ fn render_central_panel(app: &mut BitApp, ctx: &egui::Context) {
                         app.viewer.frame_length,
                         app.byte_viewer.byte_size,
                         app.byte_viewer.config.show_hex_offset,
-                        &app.patterns,
+                        &app.pattern_locator.patterns,
                         &mut app.last_ascii_bit_offset,
                     );
                 }
